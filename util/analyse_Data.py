@@ -4,33 +4,7 @@ import numpy as np
 
 # visualization
 import matplotlib.pyplot as plt
-
-def get_gcc(graph):
-    """
-    check if graph is connected -- if not, return greatest connected component subgraph
-    """
-    # Is the given graph connected?
-    connected = nx.is_connected(graph) # check if the graph is connected or not
-    if connected:
-        print("The graph is connected")
-        return graph
-    
-    print("The graph is not connected")
-    
-    # Find the number of connected components
-    num_of_cc = nx.number_connected_components(graph)
-    print("Number of connected components: {}".format(num_of_cc))
-    
-    # Get the greatest connected component subgraph
-    gcc_nodes = max(nx.connected_components(graph), key=len)
-    gcc = graph.subgraph(gcc_nodes)
-    node_fraction = gcc.number_of_nodes() / float(graph.number_of_nodes())
-    edge_fraction = gcc.number_of_edges() / float(graph.number_of_edges())
-    
-    print("Fraction of nodes in GCC: {:.3f}".format(node_fraction))
-    print("Fraction of edges in GCC: {:.3f}".format(edge_fraction))
-
-    return gcc
+from sklearn.metrics import ConfusionMatrixDisplay
 
 def compute_network_characteristics(graph):
     """
@@ -82,7 +56,6 @@ def invert_dict_count(X_dict, y_dict = None, agg = "count"):
     sorted_idx = np.array(list(inv_map.keys())).argsort()
     
     return np.array(list(inv_map.keys()))[sorted_idx], np.array(list(inv_map.values()))[sorted_idx]
-
 
 def plot_graph_stats(graph):
     """
@@ -141,6 +114,27 @@ def plot_graph_stats(graph):
     ax[1,1].set_xlabel("I (Path length in hops)")
     ax[1,1].set_ylabel("P(I)")
 
+def plot_corr_matrix(df):
+    """
+    plot absolute correlation matrix of given pandas dataframe (all columns in df must be numerical!)
+    """
+    # plot correlation matrix
+    corr_matrix = np.tril(np.abs(np.rint(np.array(df.corr()) * 100)), k = -1)
+
+    # create labels
+    labels = [f"{idx}: {col}" for idx, col in enumerate(df.columns)]
+
+    # plot confusion matrix
+    fig, ax = plt.subplots(figsize=(5, 3))
+    cm = ConfusionMatrixDisplay(corr_matrix,
+                                display_labels = labels)
+    cm.plot(ax = ax, xticks_rotation = 'vertical', cmap = plt.cm.Blues, text_kw = {"color": "w", "fontsize": 6})
+    ax.set_xticklabels([i for i in range(len(df.columns))])
+    ax.tick_params(axis='x', labelrotation = 0)
+    ax.set_xlabel("")
+    ax.set_ylabel("")
+    ax.set_title("Absolute correlation matrix of edge based features")
+
 def plot_robustness_analysis(graph, node2values, k):
     '''
     :param graph:
@@ -148,6 +142,7 @@ def plot_robustness_analysis(graph, node2values, k):
     :param k: the number of nodes to be removed
     '''
     num_connected_components = []
+    num_removed_edges = []
     gcc_sizes = []
     rest_sizes = []
     # Please write your code below    
@@ -162,19 +157,26 @@ def plot_robustness_analysis(graph, node2values, k):
     node_remove_list = node_list[:k]
     
     for node in node_remove_list:
-        g.remove_node(node) # remove a node
+        edges = g.degree(node) # nbr of edges of current node
+        g.remove_node(node) # remove current node
+        # log results
         num_connected_components.append(nx.number_connected_components(g))
+        num_removed_edges.append(edges)
         gcc = g.subgraph(max(nx.connected_components(g), key=len))
         r = gcc.number_of_nodes() / float(g.number_of_nodes())
         gcc_sizes.append(r)
         rest_sizes.append(1-r)
     
-    ## Plot
+    # plot
     plt.figure(figsize=(10,3))
     plt.subplot(1, 2, 1)
-    plt.plot(num_connected_components, '.')
+    ## number of connected components
+    line1, = plt.plot(num_connected_components, label = "# connected components")
+    line2, = plt.plot(np.cumsum(num_removed_edges), label = "# removed edges")
     plt.xlabel("# removed nodes (by descending centrality value)")
-    plt.ylabel("# connected components")
+    plt.ylabel("# objects")
+    plt.legend(handles=[line1, line2])
+    ## size of GCC vs rest
     plt.subplot(1, 2, 2)
     line1, = plt.plot(gcc_sizes, label="GCC") 
     line2, = plt.plot(rest_sizes, label="Rest")
