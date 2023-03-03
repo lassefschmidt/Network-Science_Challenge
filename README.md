@@ -6,3 +6,4 @@ Useful links:
 - https://www.kaggle.com/competitions/mlns-2023/data
 - https://hdbscan.readthedocs.io/en/latest/how_hdbscan_works.html
 - https://towardsdatascience.com/tuning-with-hdbscan-149865ac2970
+- https://github.com/VHRanger/nodevectors/blob/master/examples/link%20prediction%20-%20FULL%20RUN.ipynb (great package for node embeddings based on Random Walks!)
