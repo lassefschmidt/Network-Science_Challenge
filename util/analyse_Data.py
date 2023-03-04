@@ -125,7 +125,7 @@ def plot_corr_matrix(df):
     labels = [f"{idx}: {col}" for idx, col in enumerate(df.columns)]
 
     # plot confusion matrix
-    fig, ax = plt.subplots(figsize=(10, 8))
+    fig, ax = plt.subplots(figsize=(8,6))
     cm = ConfusionMatrixDisplay(corr_matrix,
                                 display_labels = labels)
     cm.plot(ax = ax, xticks_rotation = 'vertical', cmap = plt.cm.Blues, text_kw = {"color": "w", "fontsize": 6})

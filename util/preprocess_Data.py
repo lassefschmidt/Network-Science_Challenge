@@ -1,11 +1,7 @@
 # parse & handle data
 import networkx as nx # graph data
-import copy
-import random
 import numpy as np
 from numpy.linalg import norm
-from sklearn.model_selection import train_test_split
-import pandas as pd
 
 def clean_edgelist(edgelist):
     """
@@ -49,19 +45,41 @@ def get_gcc(G):
 
     return gcc
 
-def enrich_edgelist(edgelist, G, node_info):
+def feature_extractor(edgelist, G, node_info):
     """
     Enrich edgelist with graph-based edge features
     (e.g. resource allocation index, jaccard coefficient, etc.)
     and similarity metrics based on node-level keyword embedding
     """
-    # helper function to transform networkx generator objects
+    # helper function to transform networkx generator objects into feature dicts
     def transform_generator_to_dict(generator_obj):
         result = dict()
         for (u, v, value) in generator_obj:
             result[(u, v)] = value
         return result
     
+    # helper function to get CF- and SCF-enhanced features (see https://doi.org/10.1016/j.physa.2021.126107)
+    def enhance_CF(edge, feature_dict, feature_func):
+        (u, v) = edge
+        # get neighbors of each node
+        neighbors_u = [(n, v) for n in G.neighbors(u) if n != v]
+        neighbors_v = [(n, u) for n in G.neighbors(v) if n != u]
+        # compute similarity of neighbors of source (target) with target (source)
+        sim_neighbors_u_to_v = sum([get_sim(edge, feature_dict, feature_func) for edge in neighbors_u])
+        sim_neighbors_v_to_u = sum([get_sim(edge, feature_dict, feature_func) for edge in neighbors_v])
+        return sim_neighbors_u_to_v + sim_neighbors_v_to_u
+    
+    def enhance_SCF(edge, feature_dict, feature_func):
+        (u, v) = edge
+        sim_neighbors = enhance_CF(edge, feature_dict, feature_func)
+        sim_edge = sum([get_sim(edge, feature_dict, feature_func) for edge in [(u,v), (v,u)]])
+        return sim_neighbors + sim_edge
+    
+    def get_sim(edge, feature_dict, feature_func):
+        if edge not in feature_dict:
+            feature_dict[edge] = sum([value for (_, _, value) in feature_func(G, [edge])])
+        return feature_dict[edge]
+
     # helper function to compute cosine similarity of keyword embeddings
     def cosine_similarity(emb1, emb2):
         return np.dot(emb1, emb2)/(norm(emb1)*norm(emb2))
@@ -69,18 +87,17 @@ def enrich_edgelist(edgelist, G, node_info):
     # compute graph-based node features
     DCT = nx.degree_centrality(G)
     BCT = nx.betweenness_centrality(G)
-    ECT = nx.eigenvector_centrality_numpy(G)
+    #ECT = nx.eigenvector_centrality_numpy(G)
     KCT = nx.katz_centrality_numpy(G)
-    LCT = nx.load_centrality(G)
-    rank = nx.voterank(G)
-    RNK = {node: i for i, node in enumerate(rank[::-1])}
+    #LCT = nx.load_centrality(G)
+    #rank = nx.voterank(G)
+    #RNK = {node: i for i, node in enumerate(rank[::-1])}
     # compute graph-based edge features
     ebunch = [(u, v) for u, v in zip(edgelist.node1, edgelist.node2)]
     RA  = transform_generator_to_dict(nx.resource_allocation_index(G, ebunch))
     JCC = transform_generator_to_dict(nx.jaccard_coefficient(G, ebunch))
     AA  = transform_generator_to_dict(nx.adamic_adar_index(G, ebunch))
     PA  = transform_generator_to_dict(nx.preferential_attachment(G, ebunch))
-    
     #CNC = transform_generator_to_dict(nx.common_neighbor_centrality(G, ebunch))
 
     # append new columns
@@ -89,171 +106,28 @@ def enrich_edgelist(edgelist, G, node_info):
         .assign(nodeInfo_CS    = lambda df_: [cosine_similarity(node_info.loc[u], node_info.loc[v]) for u, v in zip(df_.node1, df_.node2)])
         .assign(nodeInfo_diff  = lambda df_: [sum(abs(node_info.loc[u] - node_info.loc[v])) for u, v in zip(df_.node1, df_.node2)])
         # node features
-        .assign(source_DCT = lambda df_: [DCT[node] for node in df_.node1])
-        .assign(target_DCT = lambda df_: [DCT[node] for node in df_.node2])
-        .assign(source_BCT = lambda df_: [BCT[node] for node in df_.node1])
-        .assign(target_BCT = lambda df_: [BCT[node] for node in df_.node2])
-        .assign(source_ECT = lambda df_: [ECT[node] for node in df_.node1])
-        .assign(target_ECT = lambda df_: [ECT[node] for node in df_.node2])
+        .assign(source_DCT   = lambda df_: [DCT[node] for node in df_.node1])
+        .assign(target_DCT   = lambda df_: [DCT[node] for node in df_.node2])
+        .assign(BCT_diff     = lambda df_: [BCT[v]- BCT[u] for u, v in zip(df_.node1, df_.node2)])
+        #.assign(source_BCT = lambda df_: [BCT[node] for node in df_.node1])
+        #.assign(target_BCT = lambda df_: [BCT[node] for node in df_.node2])
+        #.assign(source_ECT = lambda df_: [ECT[node] for node in df_.node1])
+        #.assign(target_ECT = lambda df_: [ECT[node] for node in df_.node2])
         .assign(source_KCT = lambda df_: [KCT[node] for node in df_.node1])
         .assign(target_KCT = lambda df_: [KCT[node] for node in df_.node2])
-        .assign(source_LCT = lambda df_: [LCT[node] for node in df_.node1])
-        .assign(target_LCT = lambda df_: [LCT[node] for node in df_.node2])
-        .assign(source_RNK = lambda df_: [RNK.get(node, 0) for node in df_.node1])
-        .assign(target_RNK = lambda df_: [RNK.get(node, 0) for node in df_.node2])
+        #.assign(source_LCT = lambda df_: [LCT[node] for node in df_.node1])
+        #.assign(target_LCT = lambda df_: [LCT[node] for node in df_.node2])
+        #.assign(source_RNK = lambda df_: [RNK.get(node, 0) for node in df_.node1])
+        #.assign(target_RNK = lambda df_: [RNK.get(node, 0) for node in df_.node2])
         # edge features
-        .assign(RA  = lambda df_: [RA[(u, v)]  for u, v in zip(df_.node1, df_.node2)])
-        .assign(JCC = lambda df_: [JCC[(u, v)] for u, v in zip(df_.node1, df_.node2)])
-        .assign(AA  = lambda df_: [AA[(u, v)]  for u, v in zip(df_.node1, df_.node2)])
-        .assign(PA  = lambda df_: [PA[(u, v)]  for u, v in zip(df_.node1, df_.node2)])
+        .assign(RA     = lambda df_: [RA[edge]  for edge in zip(df_.node1, df_.node2)])
+        .assign(CF_RA  = lambda df_: [enhance_CF(edge,  RA, nx.resource_allocation_index) for edge in zip(df_.node1, df_.node2)])
+        .assign(SCF_RA = lambda df_: [enhance_SCF(edge, RA, nx.resource_allocation_index) for edge in zip(df_.node1, df_.node2)])
+        .assign(JCC    = lambda df_: [JCC[edge] for edge in zip(df_.node1, df_.node2)])
+        .assign(AA     = lambda df_: [AA[edge]  for edge in zip(df_.node1, df_.node2)])
+        .assign(PA     = lambda df_: [PA[edge]  for edge in zip(df_.node1, df_.node2)])
         .assign(PA_log = lambda df_: np.log(df_.PA))
-        .assign(dsp = lambda df_: [nx.dispersion(G, u, v) for u, v in zip(df_.node1, df_.node2)])
+        .assign(dsp    = lambda df_: [nx.dispersion(G, u, v) for u, v in zip(df_.node1, df_.node2)])
         #.assign(CNC = lambda df_: [CNC[(u, v)] for u, v in zip(df_.node1, df_.node2)]) # feature leads to huge overfit! (obvious, because we use the neighbors here directly!)
         #.assign(CNC_log = lambda df_: np.log(df_.CNC)) # feature leads to huge overfit! (obvious, because we use the neighbors here directly!)
     )
-
-def train_val_split_pos_edges(G, testing_ratio=0.2, seed=42):
-    """
-    generate pos edges for validation set, trim training graph respectively
-    and ensure that it remains fully connected
-    """
-    # how many positive edges we want to sample for test data
-    val_pos_edges_num = int(len(G.edges) * testing_ratio)
-    random.seed(seed)
-    val_pos_edges = []
-
-    # make a copy of the original graph
-    G_train = copy.deepcopy(G)
-
-    # start reducing the graph
-    sampled, removed = 0, 0
-    while (removed < val_pos_edges_num) and (sampled < val_pos_edges_num * 10):
-        sampled += 1
-        random_edge = random.sample(G_train.edges, 1) # sample one random edge
-        [(u, v)] = random_edge # unpack edge
-        if (G_train.degree(u) > 1 and G_train.degree(v) > 1): # only remove edge if both nodes have degree >1
-            G_train.remove_edge(u, v)
-            # check if this led to disconnected graph
-            if not nx.is_connected(G_train):
-                G_train.add_edge(u, v)
-                continue
-            val_pos_edges.append((u, v, 1))
-            removed += 1
-        else:
-            continue
-    
-    # remove any isolated nodes (there should be none)
-    G_train.remove_nodes_from(nx.isolates(G_train))
-
-    # extract remaining edges from G_train (that's our training data)
-    train_pos_edges = [(u, v, 1) for (u, v) in G_train.edges()]
-
-    # convert both lists into DataFrame
-    train_pos_edges = pd.DataFrame(train_pos_edges).rename(columns = {0: "node1", 1: "node2", 2: "y"})
-    val_pos_edges = pd.DataFrame(val_pos_edges).rename(columns = {0: "node1", 1: "node2", 2: "y"})
-
-    # check that number of nodes has not changed
-    node_num1 = G.number_of_nodes()
-    node_num2 = G_train.number_of_nodes()
-    assert node_num1 == node_num2
-
-    # print key stats
-    print(f"Number of positive edges for training: {len(train_pos_edges)}")
-    print(f"Number of positive edges for validation: {len(val_pos_edges)}")
-    print(f"Number of edges in original graph: {G.number_of_edges()}")
-    print(f"Number of edges in training graph: {G_train.number_of_edges()}")
-
-    return G_train, train_pos_edges, val_pos_edges
-
-def train_val_split_neg_edges(edgelist, testing_ratio = 0.2, seed=42):
-    """
-    fetch negative edges for validation set from existing edgelist
-    """
-    # filter edgelist for negative samples
-    edgelist = edgelist.loc[(edgelist.y == 0)]
-
-    # perform train test split on it
-    train_neg_edges, val_neg_edges = train_test_split(edgelist, test_size = testing_ratio, random_state = seed)
-
-    return train_neg_edges, val_neg_edges
-
-def split_frame(df):
-    # split into X and y and drop node columns
-    if "y" in df:
-        y = df.loc[:, "y"]
-        X = copy.deepcopy(df)
-        X.drop(["node1", "node2", "y"], axis = 1, inplace = True)
-        return X, y
-    else:
-        X = copy.deepcopy(df)
-        X.drop(["node1", "node2"], axis = 1, inplace = True)
-        return X
-
-def load_prep_data():
-    """
-    helper function that performs all loading + preprocessing for model building
-    """
-    node_info = (pd.read_csv('data/node_information.csv', index_col = 0, header = None)
-                 .rename_axis("node"))
-    
-    # read edge lists (train and test)
-    train = pd.read_csv('data/train.txt', header = None, sep = " ").rename(columns = {0: "node1", 1: "node2", 2: "y"})
-    test  = pd.read_csv('data/test.txt' , header = None, sep = " ").rename(columns = {0: "node1", 1: "node2"})
-
-    # sort edge lists (so lower numbered node is always in first column)
-    train = train[["node1", "node2"]].apply(lambda x: np.sort(x), axis = 1, raw = True).assign(y = train.y)
-    test  = test[[ "node1", "node2"]].apply(lambda x: np.sort(x), axis = 1, raw = True)
-
-    # remove edges from edgelist where source node == target node (always predict 1)
-    train_tf = clean_edgelist(train)
-    test_tf  = clean_edgelist(test)
-
-    # build graph
-    G = fetch_graph(train_tf)
-
-    # generate train and validation data (postive edges)
-    G_train, train_pos_edges, val_pos_edges = train_val_split_pos_edges(G, testing_ratio = 0.1)
-
-    # validate that graph is still connected
-    get_gcc(G_train)
-
-    # generate train and validation data (negative edges)
-    train_neg_edges, val_neg_edges = train_val_split_neg_edges(train_tf, testing_ratio = 0.1)
-
-    # append to dataframe
-    train_tf = pd.concat([train_pos_edges, train_neg_edges])
-    val_tf = pd.concat([val_pos_edges, val_neg_edges])
-
-    # enrich train and validation data
-    train_tf = enrich_edgelist(train_tf, G_train, node_info)
-    val_tf   = enrich_edgelist(val_tf, G_train, node_info)
-
-    # enrich test data
-    test_tf  = enrich_edgelist(test_tf, G, node_info)
-
-    # split
-    X_train, y_train = split_frame(train_tf)
-    X_val, y_val     = split_frame(val_tf)
-    X_test           = split_frame(test_tf)
-
-    # merge to get trainval data
-    X_trainval = pd.concat([X_train, X_val])
-    y_trainval = pd.concat([y_train, y_val])
-
-    return G, G_train, train_tf, val_tf, test, test_tf, X_train, y_train, X_val, y_val, X_trainval, y_trainval, X_test
-
-def save_preds(test, test_tf, preds):
-    save_test = (test
-        .join(test_tf.assign(Predicted = preds).Predicted)
-        # missing values are entries where target == source node
-        .assign(Predicted = lambda df_: df_.Predicted.mask(df_.Predicted.isna(), 1))
-        # convert to int
-        .assign(Predicted = lambda df_: df_.Predicted.astype(int))
-        # remove useless columns
-        .drop(["node1", "node2"], axis = 1, inplace = False)
-    )
-
-    # save predictions
-    save_test.to_csv('data/test_preds.csv', index_label = "ID")
-
-    return save_test
