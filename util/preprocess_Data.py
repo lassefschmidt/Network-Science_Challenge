@@ -1,5 +1,6 @@
 # parse & handle data
 import networkx as nx # graph data
+from node2vec import Node2Vec
 import numpy as np
 from numpy.linalg import norm
 
@@ -50,6 +51,8 @@ def feature_extractor(edgelist, G, node_info):
     Enrich edgelist with graph-based edge features
     (e.g. resource allocation index, jaccard coefficient, etc.)
     and similarity metrics based on node-level keyword embedding
+
+    Features that didn't work out: HITS algorithm, eigenvector/katz/common-neighbor/load centrality, voterank, CF/SCF enhanced RA (huge overfit), dispersion
     """
     # helper function to transform networkx generator objects into feature dicts
     def transform_generator_to_dict(generator_obj):
@@ -87,18 +90,12 @@ def feature_extractor(edgelist, G, node_info):
     # compute graph-based node features
     DCT = nx.degree_centrality(G)
     BCT = nx.betweenness_centrality(G)
-    #ECT = nx.eigenvector_centrality_numpy(G)
-    KCT = nx.katz_centrality_numpy(G)
-    #LCT = nx.load_centrality(G)
-    #rank = nx.voterank(G)
-    #RNK = {node: i for i, node in enumerate(rank[::-1])}
     # compute graph-based edge features
     ebunch = [(u, v) for u, v in zip(edgelist.node1, edgelist.node2)]
     RA  = transform_generator_to_dict(nx.resource_allocation_index(G, ebunch))
     JCC = transform_generator_to_dict(nx.jaccard_coefficient(G, ebunch))
     AA  = transform_generator_to_dict(nx.adamic_adar_index(G, ebunch))
     PA  = transform_generator_to_dict(nx.preferential_attachment(G, ebunch))
-    #CNC = transform_generator_to_dict(nx.common_neighbor_centrality(G, ebunch))
 
     # append new columns
     return (edgelist
@@ -106,28 +103,16 @@ def feature_extractor(edgelist, G, node_info):
         .assign(nodeInfo_CS    = lambda df_: [cosine_similarity(node_info.loc[u], node_info.loc[v]) for u, v in zip(df_.node1, df_.node2)])
         .assign(nodeInfo_diff  = lambda df_: [sum(abs(node_info.loc[u] - node_info.loc[v])) for u, v in zip(df_.node1, df_.node2)])
         # node features
-        .assign(source_DCT   = lambda df_: [DCT[node] for node in df_.node1])
-        .assign(target_DCT   = lambda df_: [DCT[node] for node in df_.node2])
-        .assign(BCT_diff     = lambda df_: [BCT[v]- BCT[u] for u, v in zip(df_.node1, df_.node2)])
-        #.assign(source_BCT = lambda df_: [BCT[node] for node in df_.node1])
-        #.assign(target_BCT = lambda df_: [BCT[node] for node in df_.node2])
-        #.assign(source_ECT = lambda df_: [ECT[node] for node in df_.node1])
-        #.assign(target_ECT = lambda df_: [ECT[node] for node in df_.node2])
-        .assign(source_KCT = lambda df_: [KCT[node] for node in df_.node1])
-        .assign(target_KCT = lambda df_: [KCT[node] for node in df_.node2])
-        #.assign(source_LCT = lambda df_: [LCT[node] for node in df_.node1])
-        #.assign(target_LCT = lambda df_: [LCT[node] for node in df_.node2])
-        #.assign(source_RNK = lambda df_: [RNK.get(node, 0) for node in df_.node1])
-        #.assign(target_RNK = lambda df_: [RNK.get(node, 0) for node in df_.node2])
+        .assign(source_DCT  = lambda df_: [DCT[node] for node in df_.node1])
+        .assign(target_DCT  = lambda df_: [DCT[node] for node in df_.node2])
+        .assign(BCT_diff    = lambda df_: [BCT[v]- BCT[u] for u, v in zip(df_.node1, df_.node2)])
         # edge features
         .assign(RA     = lambda df_: [RA[edge]  for edge in zip(df_.node1, df_.node2)])
-        .assign(CF_RA  = lambda df_: [enhance_CF(edge,  RA, nx.resource_allocation_index) for edge in zip(df_.node1, df_.node2)])
-        .assign(SCF_RA = lambda df_: [enhance_SCF(edge, RA, nx.resource_allocation_index) for edge in zip(df_.node1, df_.node2)])
         .assign(JCC    = lambda df_: [JCC[edge] for edge in zip(df_.node1, df_.node2)])
         .assign(AA     = lambda df_: [AA[edge]  for edge in zip(df_.node1, df_.node2)])
         .assign(PA     = lambda df_: [PA[edge]  for edge in zip(df_.node1, df_.node2)])
+        .assign(CF_PA  = lambda df_: [enhance_CF(edge,  PA, nx.preferential_attachment) for edge in zip(df_.node1, df_.node2)])
+        .assign(SCF_PA = lambda df_: [enhance_SCF(edge, PA, nx.preferential_attachment) for edge in zip(df_.node1, df_.node2)])
         .assign(PA_log = lambda df_: np.log(df_.PA))
-        .assign(dsp    = lambda df_: [nx.dispersion(G, u, v) for u, v in zip(df_.node1, df_.node2)])
-        #.assign(CNC = lambda df_: [CNC[(u, v)] for u, v in zip(df_.node1, df_.node2)]) # feature leads to huge overfit! (obvious, because we use the neighbors here directly!)
-        #.assign(CNC_log = lambda df_: np.log(df_.CNC)) # feature leads to huge overfit! (obvious, because we use the neighbors here directly!)
+        .assign(CF_PA_log = lambda df_: np.log(df_.CF_PA))
     )
