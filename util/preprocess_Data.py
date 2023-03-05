@@ -1,6 +1,7 @@
 # parse & handle data
+from apyori import apriori # generate decision rules
+from itertools import combinations
 import networkx as nx # graph data
-from node2vec import Node2Vec
 import numpy as np
 from numpy.linalg import norm
 
@@ -46,7 +47,47 @@ def get_gcc(G):
 
     return gcc
 
-def feature_extractor(edgelist, G, node_info):
+def get_decision_rules(edgelist, node_info):
+    """
+    Extract decision rules based on keyword embedding of graph.
+    """
+    # get dense representation of keywords per node
+    kws_per_node = (node_info
+        .assign(kws = lambda df_: [sorted(set([col + 1 for col, val in enumerate(df_.loc[i]) if val != 0])) for i in df_.index])
+        .kws.to_frame()
+        .assign(num_kws = lambda df_: [len(kw) for kw in df_.kws])
+    )
+
+    # create baskets
+    baskets = []
+    for u, v in edgelist:
+        basket = kws_per_node.kws.loc[u] + kws_per_node.kws.loc[v]
+        baskets.append(basket)
+
+    # generate decision rules for sets of keywords that were combined at least 10 times
+    association_rules = apriori(baskets, min_support=10/len(baskets), min_confidence=0.2, min_lift=3, max_length=3)
+    association_results = list(association_rules)
+
+    # store them in a dict
+    rule_finder_dict = dict()
+    rule_values_dict = dict()
+    for item in association_results:
+        pair = item[0]
+        items = [x for x in pair]
+        source = items[0]
+        target = items[1]
+        supp = item[1] * len(baskets)
+        conf = item[2][0][2]
+        lift = item[2][0][3]
+
+        # add to dicts
+        rule_finder_dict[source] = rule_finder_dict.get(source, []) + [target]
+        rule_values_dict[(source, target)] = {"support": supp, "confidence": conf, "lift": lift}
+
+    return kws_per_node, rule_finder_dict, rule_values_dict
+
+
+def feature_extractor(edgelist, G, node_info, trainval = None):
     """
     Enrich edgelist with graph-based edge features
     (e.g. resource allocation index, jaccard coefficient, etc.)
@@ -87,6 +128,45 @@ def feature_extractor(edgelist, G, node_info):
     def cosine_similarity(emb1, emb2):
         return np.dot(emb1, emb2)/(norm(emb1)*norm(emb2))
     
+    # helper function to get count of all relevant decision rules between source and target
+    def get_dr_count(edge):
+        (u, v) = edge
+        u_emb = kws_per_node.kws.loc[u]
+        v_emb = kws_per_node.kws.loc[v]
+        # create list of all possible entries
+        u_perm = u_emb + list(combinations(u_emb, r = 2))
+        v_perm = v_emb + list(combinations(v_emb, r = 2))
+        # loop over rules from u -> v and from v -> u
+        rules = set()
+        for key in u_perm:
+            targets = rule_finder_dict.get(key, None)
+            if targets is not None:
+                rules = rules.union([(key, target) for target in set(v_perm).intersection(set(targets))])
+        for key in v_perm:
+            targets = rule_finder_dict.get(key, None)
+            if targets is not None:
+                rules = rules.union([(key, target) for target in set(u_perm).intersection(set(targets))])
+
+        lift = sum([rule_values_dict[key]["lift"] for key in rules])
+
+        return lift
+    
+    # get decision rules for keyword embeddings (only those rules that are valid for positive edges)
+    if trainval is None:
+        pos_edges = edgelist.loc[edgelist.y == 1][["node1", "node2"]].values.tolist()
+        neg_edges = edgelist.loc[edgelist.y == 0][["node1", "node2"]].values.tolist()
+    else:
+        pos_edges = trainval.loc[trainval.y == 1][["node1", "node2"]].values.tolist()
+        neg_edges = trainval.loc[trainval.y == 0][["node1", "node2"]].values.tolist()
+
+    kws_per_node, rule_finder_dict, rule_values_dict = get_decision_rules(pos_edges, node_info)
+    _, neg_rule_finder_dict, neg_rule_values_dict    = get_decision_rules(neg_edges, node_info)
+    rule_values_dict = {key: values for key, values in rule_values_dict.items() if key not in neg_rule_values_dict}
+    for key, targets in rule_finder_dict.items():
+        non_targets = neg_rule_finder_dict.get(key, None)
+        if non_targets is not None:
+            rule_finder_dict[key] = set(targets) - set(non_targets)
+    
     # compute graph-based node features
     DCT = nx.degree_centrality(G)
     BCT = nx.betweenness_centrality(G)
@@ -102,6 +182,8 @@ def feature_extractor(edgelist, G, node_info):
         # node_info features
         .assign(nodeInfo_CS    = lambda df_: [cosine_similarity(node_info.loc[u], node_info.loc[v]) for u, v in zip(df_.node1, df_.node2)])
         .assign(nodeInfo_diff  = lambda df_: [sum(abs(node_info.loc[u] - node_info.loc[v])) for u, v in zip(df_.node1, df_.node2)])
+        .assign(dr_lift        = lambda df_: [get_dr_count(edge) for edge in zip(df_.node1, df_.node2)])
+        .assign(dr_lift_log    = lambda df_: np.log1p(df_.dr_lift))
         # node features
         .assign(source_DCT  = lambda df_: [DCT[node] for node in df_.node1])
         .assign(target_DCT  = lambda df_: [DCT[node] for node in df_.node2])
@@ -111,6 +193,8 @@ def feature_extractor(edgelist, G, node_info):
         .assign(JCC    = lambda df_: [JCC[edge] for edge in zip(df_.node1, df_.node2)])
         .assign(AA     = lambda df_: [AA[edge]  for edge in zip(df_.node1, df_.node2)])
         .assign(PA     = lambda df_: [PA[edge]  for edge in zip(df_.node1, df_.node2)])
+        .assign(CF_RA  = lambda df_: [enhance_CF(edge,  RA, nx.resource_allocation_index) for edge in zip(df_.node1, df_.node2)])
+        .assign(SCF_RA = lambda df_: [enhance_SCF(edge, RA, nx.resource_allocation_index) for edge in zip(df_.node1, df_.node2)])
         .assign(CF_PA  = lambda df_: [enhance_CF(edge,  PA, nx.preferential_attachment) for edge in zip(df_.node1, df_.node2)])
         .assign(SCF_PA = lambda df_: [enhance_SCF(edge, PA, nx.preferential_attachment) for edge in zip(df_.node1, df_.node2)])
         .assign(PA_log = lambda df_: np.log(df_.PA))

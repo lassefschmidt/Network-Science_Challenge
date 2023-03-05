@@ -122,11 +122,14 @@ def load(testing_ratio):
     val_tf = pd.concat([val_pos_edges, val_neg_edges])
 
     # enrich train and validation data
+    print("Enriching train data...")
     train_tf = prepData.feature_extractor(train_tf, G_train, node_info)
+    print("Enriching validation data...")
     val_tf   = prepData.feature_extractor(val_tf, G_train, node_info)
 
     # enrich test data
-    test_tf  = prepData.feature_extractor(test_tf, G, node_info)
+    print("Enriching test data...")
+    test_tf = prepData.feature_extractor(test_tf, G, node_info, trainval = prepData.clean_edgelist(train))
 
     # split
     X_train, y_train = split_frame(train_tf)
