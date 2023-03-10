@@ -11,3 +11,4 @@ Useful links:
 
 Feature engineering:
 - decision rules --> only keep those that have predictive power (instead of removing the negative decision rules)
+- how to incorporate node features into encoding of each node? e.g. for each edge compute node embedding similarity and set it as edge weight --> then run encoding (node2vec or deep graph encoder) on the weighted graph
