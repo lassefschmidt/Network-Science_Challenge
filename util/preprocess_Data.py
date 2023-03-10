@@ -53,7 +53,7 @@ def get_decision_rules(edgelist, node_info):
     """
     # get dense representation of keywords per node
     kws_per_node = (node_info
-        .assign(kws = lambda df_: [sorted(set([col + 1 for col, val in enumerate(df_.loc[i]) if val != 0])) for i in df_.index])
+        .assign(kws = lambda df_: [sorted(set([df_.columns[idx] for idx, val in enumerate(df_.loc[i]) if val != 0])) for i in df_.index])
         .kws.to_frame()
         .assign(num_kws = lambda df_: [len(kw) for kw in df_.kws])
     )
@@ -65,7 +65,7 @@ def get_decision_rules(edgelist, node_info):
         baskets.append(basket)
 
     # generate decision rules for sets of keywords that were combined at least 10 times
-    association_rules = apriori(baskets, min_support=10/len(baskets), min_confidence=0.2, min_lift=3, max_length=3)
+    association_rules = apriori(baskets, min_support=20/len(baskets), min_confidence=0.2, min_lift=3, max_length=3)
     association_results = list(association_rules)
 
     # store them in a dict
@@ -86,14 +86,15 @@ def get_decision_rules(edgelist, node_info):
 
     return kws_per_node, rule_finder_dict, rule_values_dict
 
-
 def feature_extractor(edgelist, G, node_info, trainval = None):
     """
     Enrich edgelist with graph-based edge features
     (e.g. resource allocation index, jaccard coefficient, etc.)
     and similarity metrics based on node-level keyword embedding
 
-    Features that didn't work out: HITS algorithm, eigenvector/katz/common-neighbor/load centrality, voterank, CF/SCF enhanced RA (huge overfit), dispersion
+    Features that didn't work out: 
+    HITS algorithm, eigenvector/katz/common-neighbor/load centrality, voterank, CF/SCF enhanced RA (huge overfit),
+    dispersion, cosine similarity of embeddings
     """
     # helper function to transform networkx generator objects into feature dicts
     def transform_generator_to_dict(generator_obj):
@@ -123,11 +124,64 @@ def feature_extractor(edgelist, G, node_info, trainval = None):
         if edge not in feature_dict:
             feature_dict[edge] = sum([value for (_, _, value) in feature_func(G, [edge])])
         return feature_dict[edge]
-
-    # helper function to compute cosine similarity of keyword embeddings
-    def cosine_similarity(emb1, emb2):
-        return np.dot(emb1, emb2)/(norm(emb1)*norm(emb2))
     
+    def enhance(edge, feature_dict, feature_func, enhance_type):
+        (u, v) = edge
+        # remove current edge to avoid overfitting (if it exists)
+        try:
+            G.remove_edge(u, v)
+            edge_removed = True
+        except nx.NetworkXError:
+            edge_removed = False
+        
+        # get feature
+        if enhance_type == "CF":
+            result = enhance_CF(edge, feature_dict, feature_func)
+        elif enhance_type == "SCF":
+            result = enhance_SCF(edge, feature_dict, feature_func)
+
+        # add current edge back to graph if it existed
+        if edge_removed:
+            G.add_edge(u, v)
+
+        return result
+    
+    # compute graph-based node features
+    DCT = nx.degree_centrality(G)
+    BCT = nx.betweenness_centrality(G)
+    # compute graph-based edge features
+    ebunch = [(u, v) for u, v in zip(edgelist.node1, edgelist.node2)]
+    RA  = transform_generator_to_dict(nx.resource_allocation_index(G, ebunch))
+    JCC = transform_generator_to_dict(nx.jaccard_coefficient(G, ebunch))
+    AA  = transform_generator_to_dict(nx.adamic_adar_index(G, ebunch))
+    PA  = transform_generator_to_dict(nx.preferential_attachment(G, ebunch))
+    CNC  = transform_generator_to_dict(nx.common_neighbor_centrality(G, ebunch))
+
+    # append new columns
+    return (edgelist
+        # node_info features
+        .assign(nodeInfo_dupl  = lambda df_: [1 if (node_info.loc[u].values == node_info.loc[v].values).all() else 0 for u, v in zip(df_.node1, df_.node2)])
+        #.assign(nodeInfo_CS    = lambda df_: [cosine_similarity(node_info.loc[u], node_info.loc[v]) for u, v in zip(df_.node1, df_.node2)])
+        .assign(nodeInfo_diff  = lambda df_: [sum(abs(node_info.loc[u] - node_info.loc[v])) for u, v in zip(df_.node1, df_.node2)])
+        # node features
+        .assign(source_DCT  = lambda df_: [DCT[node] for node in df_.node1])
+        .assign(target_DCT  = lambda df_: [DCT[node] for node in df_.node2])
+        .assign(BCT_diff    = lambda df_: [BCT[v]- BCT[u] for u, v in zip(df_.node1, df_.node2)])
+        # edge features
+        .assign(graph_distance = lambda df_: [nx.shortest_path_length(G, source = u, target = v) for u, v in zip(df_.node1, df_.node2)])
+        .assign(CNC    = lambda df_: [CNC[edge] for edge in zip(df_.node1, df_.node2)])
+        .assign(RA     = lambda df_: [RA[edge]  for edge in zip(df_.node1, df_.node2)])
+        .assign(JCC    = lambda df_: [JCC[edge] for edge in zip(df_.node1, df_.node2)])
+        .assign(AA     = lambda df_: [AA[edge]  for edge in zip(df_.node1, df_.node2)])
+        .assign(PA     = lambda df_: [PA[edge]  for edge in zip(df_.node1, df_.node2)])
+        .assign(CF_RA  = lambda df_: [enhance(edge,  RA, nx.resource_allocation_index, "CF") for edge in zip(df_.node1, df_.node2)])
+        .assign(SCF_RA = lambda df_: [enhance(edge, RA, nx.resource_allocation_index, "SCF") for edge in zip(df_.node1, df_.node2)])
+        .assign(CF_PA  = lambda df_: [enhance(edge,  PA, nx.preferential_attachment, "CF") for edge in zip(df_.node1, df_.node2)])
+        .assign(SCF_PA = lambda df_: [enhance(edge, PA, nx.preferential_attachment, "SCF") for edge in zip(df_.node1, df_.node2)])
+        .assign(PA_log = lambda df_: np.log(df_.PA))
+    )
+
+    # .assign(dr_lift        = lambda df_: [get_dr_count(edge) for edge in zip(df_.node1, df_.node2)])
     # helper function to get count of all relevant decision rules between source and target
     def get_dr_count(edge):
         (u, v) = edge
@@ -166,37 +220,3 @@ def feature_extractor(edgelist, G, node_info, trainval = None):
         non_targets = neg_rule_finder_dict.get(key, None)
         if non_targets is not None:
             rule_finder_dict[key] = set(targets) - set(non_targets)
-    
-    # compute graph-based node features
-    DCT = nx.degree_centrality(G)
-    BCT = nx.betweenness_centrality(G)
-    # compute graph-based edge features
-    ebunch = [(u, v) for u, v in zip(edgelist.node1, edgelist.node2)]
-    RA  = transform_generator_to_dict(nx.resource_allocation_index(G, ebunch))
-    JCC = transform_generator_to_dict(nx.jaccard_coefficient(G, ebunch))
-    AA  = transform_generator_to_dict(nx.adamic_adar_index(G, ebunch))
-    PA  = transform_generator_to_dict(nx.preferential_attachment(G, ebunch))
-
-    # append new columns
-    return (edgelist
-        # node_info features
-        .assign(nodeInfo_CS    = lambda df_: [cosine_similarity(node_info.loc[u], node_info.loc[v]) for u, v in zip(df_.node1, df_.node2)])
-        .assign(nodeInfo_diff  = lambda df_: [sum(abs(node_info.loc[u] - node_info.loc[v])) for u, v in zip(df_.node1, df_.node2)])
-        .assign(dr_lift        = lambda df_: [get_dr_count(edge) for edge in zip(df_.node1, df_.node2)])
-        .assign(dr_lift_log    = lambda df_: np.log1p(df_.dr_lift))
-        # node features
-        .assign(source_DCT  = lambda df_: [DCT[node] for node in df_.node1])
-        .assign(target_DCT  = lambda df_: [DCT[node] for node in df_.node2])
-        .assign(BCT_diff    = lambda df_: [BCT[v]- BCT[u] for u, v in zip(df_.node1, df_.node2)])
-        # edge features
-        .assign(RA     = lambda df_: [RA[edge]  for edge in zip(df_.node1, df_.node2)])
-        .assign(JCC    = lambda df_: [JCC[edge] for edge in zip(df_.node1, df_.node2)])
-        .assign(AA     = lambda df_: [AA[edge]  for edge in zip(df_.node1, df_.node2)])
-        .assign(PA     = lambda df_: [PA[edge]  for edge in zip(df_.node1, df_.node2)])
-        .assign(CF_RA  = lambda df_: [enhance_CF(edge,  RA, nx.resource_allocation_index) for edge in zip(df_.node1, df_.node2)])
-        .assign(SCF_RA = lambda df_: [enhance_SCF(edge, RA, nx.resource_allocation_index) for edge in zip(df_.node1, df_.node2)])
-        .assign(CF_PA  = lambda df_: [enhance_CF(edge,  PA, nx.preferential_attachment) for edge in zip(df_.node1, df_.node2)])
-        .assign(SCF_PA = lambda df_: [enhance_SCF(edge, PA, nx.preferential_attachment) for edge in zip(df_.node1, df_.node2)])
-        .assign(PA_log = lambda df_: np.log(df_.PA))
-        .assign(CF_PA_log = lambda df_: np.log(df_.CF_PA))
-    )
