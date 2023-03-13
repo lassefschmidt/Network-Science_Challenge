@@ -13,24 +13,27 @@ from ray import tune
 from ray import tune, air
 from ray.tune import JupyterNotebookReporter
 import numpy as np
+from sklearn.metrics import accuracy_score, roc_auc_score
+import pandas as pd
 
 # ignore warnings that show in every raytune run
 import warnings
 warnings.simplefilter(action = "ignore", category = np.VisibleDeprecationWarning)
 
 class Encoder(torch.nn.Module):
-    def __init__(self, in_channels, out_channels):
+    def __init__(self, in_channels, out_channels, scaling_factor, num_propagations, teleport_probability, dropout):
         super(Encoder, self).__init__()
         self.linear1 = nn.Linear(in_channels, out_channels)
         self.linear2 = nn.Linear(in_channels, out_channels)
-        self.propagate = APPNP(K=1, alpha=0)
+        self.scaling_factor = scaling_factor
+        self.propagate = APPNP(K = num_propagations, alpha = teleport_probability, dropout = dropout)
 
     def forward(self, x, edge_index):
         x_ = self.linear1(x)
         x_ = self.propagate(x_, edge_index)
 
         x = self.linear2(x)
-        x = F.normalize(x,p=2,dim=1) * 1.8
+        x = F.normalize(x,p=2,dim=1) * self.scaling_factor
         x = self.propagate(x, edge_index)
         return x, x_
 
@@ -64,6 +67,12 @@ def load(testing_ratio = 0.3):
                 val_edges = torch.tensor(
                     trainval_tf.loc[trainval_tf.val_mask == 1][["node1", "node2"]].values
                 ).T,
+                trainval_edges = torch.tensor(
+                    trainval_tf[["node1", "node2"]].values
+                ).T,
+                trainval_pos_edges = torch.tensor(
+                    trainval_tf.loc[trainval_tf.y == 1][["node1", "node2"]].values
+                ).T,
                 test_edges = torch.tensor(
                     test_tf.values
                 ).T)
@@ -92,8 +101,9 @@ def train_validate(config):
     data = config["data"]
 
     # model initialisation
-    if config["model"] == "VGAE":
-        model = VGAE(Encoder(data.x.size()[1], config["enc_channels"]))
+    if config["model"] == "VGNAE":
+        model = VGAE(Encoder(data.x.size()[1], config["enc_channels"], config["scaling"],
+                             config["num_prop"], config["teleport"], config["dropout"]))
 
     # initialise device
     device, model = get_device(model)
@@ -105,14 +115,33 @@ def train_validate(config):
     optimizer = torch.optim.AdamW(model.parameters(), lr = config["lr"], weight_decay = config["wd"])
 
     # metrics
-    max_val_auc = 0
+    max_val_acc = 0
 
     # helper function
     def validate(pos_edges, neg_edges):
         model.eval()
         with torch.no_grad():
             z = model.encode(data.x, data.train_pos_edges)
-        return model.test(z, pos_edges, neg_edges)
+
+        # get preds
+        pos_y = z.new_ones(pos_edges.size(1))
+        neg_y = z.new_zeros(neg_edges.size(1))
+        y = torch.cat([pos_y, neg_y], dim=0)
+
+        pos_pred_probas = model.decoder(z, pos_edges, sigmoid=True)
+        neg_pred_probas = model.decoder(z, neg_edges, sigmoid=True)
+        pred_probas = torch.cat([pos_pred_probas, neg_pred_probas], dim=0)
+
+        y, pred_probas = y.detach().cpu().numpy(), pred_probas.detach().cpu().numpy()
+        pred = (pd.DataFrame(pred_probas)
+            .rename(columns = {0: "pred_probas"})
+            .assign(pred = lambda df_: (df_.pred_probas > df_.pred_probas.median()).astype(int))
+        )
+        # compute scores
+        auc = roc_auc_score(y, pred_probas)
+        acc = accuracy_score(y, pred.pred)
+
+        return auc, acc
     
     for epoch in range(1, max_epochs + 1):
         ##TRAINING##
@@ -128,7 +157,7 @@ def train_validate(config):
 
         # compute stats
         trn_loss = loss.item()
-        trn_auc, trn_ap = validate(data.train_pos_edges, data.train_neg_edges)
+        trn_auc, trn_acc = validate(data.train_pos_edges, data.train_neg_edges)
 
         ##VALIDATION##
         model.eval()
@@ -140,35 +169,35 @@ def train_validate(config):
 
             # compute stats
             val_loss = loss.item()
-            val_auc, val_ap = validate(data.val_pos_edges, data.val_neg_edges)
+            val_auc, val_acc = validate(data.val_pos_edges, data.val_neg_edges)
         
         ##SAVE current best models##
         if config["save"]:
-            if val_auc > max_val_auc:
-                max_val_auc = val_auc
+            if val_acc > max_val_acc:
+                max_val_acc = val_acc
                 path = os.path.abspath("")+"\\autoencoder.pt"
                 torch.save(model.state_dict(), path)
 
         ##REPORT##
         if config["verbose"]:          
-            print('Epoch: [{}/{}], Train Loss: {:.4f}, Val Loss: {:.4f}, Train AUC: {:.4f}, Val AUC: {:.4f}'.format(epoch, max_epochs,
+            print('Epoch: [{}/{}], Train Loss: {:.4f}, Val Loss: {:.4f}, Train ACC: {:.4f}, Val ACC: {:.4f}'.format(epoch, max_epochs,
                                                                                                                     trn_loss, val_loss,
-                                                                                                                    trn_auc, val_auc))
+                                                                                                                    trn_acc, val_acc))
 
         if config["ray"]:
             tune.report(trn_loss = trn_loss, val_loss = val_loss,
-                        trn_auc = trn_auc, val_auc = val_auc, max_val_auc = max_val_auc,
-                        trn_ap = trn_ap, val_ap = val_ap)
+                        trn_auc = trn_auc, val_auc = val_auc, max_val_acc = max_val_acc,
+                        trn_acc = trn_acc, val_acc = val_acc)
             
-def get_embeddings(model, data):
-    embeddings = model.encode(data.x, data.train_pos_edges)
+def get_embeddings(model, x, pos_edges):
+    embeddings = model.encode(x, pos_edges)
     return embeddings.detach().cpu().numpy()
 
-def get_similarity(model, data, edges):
+def get_similarity(model, x, pos_edges, pred_edges):
     model.eval()
     with torch.no_grad():
-        z = model.encode(data.x, data.train_pos_edges)
-    pred = model.decoder(z, edges, sigmoid = True)
+        z = model.encode(x, pos_edges)
+    pred = model.decoder(z, pred_edges, sigmoid = True)
     return pred.detach().cpu().numpy()
             
 def trial_str_creator(trial):
@@ -214,12 +243,10 @@ def run_ray_experiment(train_func, config, ray_path, num_samples, metric_columns
     
     return result_grid
 
-def open_validate_ray_experiment(ray_path, experiment_name):
-    
+def open_validate_ray_experiment(experiment_path, trainable):
     # open & read experiment folder
-    experiment_path = ray_path + experiment_name
     print(f"Loading results from {experiment_path}...")
-    restored_tuner = tune.Tuner.restore(experiment_path)
+    restored_tuner = tune.Tuner.restore(experiment_path, trainable = trainable, resume_unfinished = False)
     result_grid = restored_tuner.get_results()
     print("Done!\n")
 
