@@ -9,7 +9,6 @@ import torch.nn.functional as F
 from torch_geometric.data import Data
 from torch_geometric.nn import GAE, VGAE, APPNP
 import torch_geometric.transforms as T
-from ray import tune
 from ray import tune, air
 from ray.tune import JupyterNotebookReporter
 import numpy as np
