@@ -1,6 +1,6 @@
 {
-  "data": "Data(x=[3597, 932], train_pos_edges=[2, 4174], train_neg_edges=[2, 4198], val_pos_edges=[2, 1043], val_neg_edges=[2, 1050], train_edges=[2, 8372], val_edges=[2, 2093], trainval_edges=[2, 10465], trainval_pos_edges=[2, 5217], test_edges=[2, 3481])",
-  "dropout": 0.01,
+  "data": "Data(x=[3597, 932], train_pos_edges=[2, 4174], train_neg_edges=[2, 4198], val_pos_edges=[2, 1043], val_neg_edges=[2, 1050], train_edges=[2, 8372], val_edges=[2, 2093], trainval_edges=[2, 10465], test_edges=[2, 3481])",
+  "dropout": 0.1,
   "enc_channels": 64,
   "lr": 1e-05,
   "max_epochs": 300,
@@ -9,7 +9,7 @@
   "ray": true,
   "save": true,
   "scaling": 1.5,
-  "teleport": 0.2,
+  "teleport": 0.1,
   "verbose": false,
   "wd": 0.1
 }
