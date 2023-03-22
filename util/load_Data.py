@@ -89,6 +89,10 @@ def load(testing_ratio = 0.2):
     node_info = (pd.read_csv('data/node_information.csv', index_col = 0, header = None)
                  .rename_axis("node"))
     
+    # remove completely empty columns from node_info
+    empty_cols = node_info.columns[node_info.nunique() == 1].values
+    node_info = node_info.drop(columns = empty_cols, inplace = False)
+    
     # read edge lists (train and test)
     trainval = pd.read_csv('data/train.txt', header = None, sep = " ").rename(columns = {0: "node1", 1: "node2", 2: "y"})
     test  = pd.read_csv('data/test.txt' , header = None, sep = " ").rename(columns = {0: "node1", 1: "node2"})

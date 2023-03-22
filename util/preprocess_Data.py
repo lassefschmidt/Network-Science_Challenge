@@ -86,6 +86,36 @@ def get_decision_rules(edgelist, node_info):
 
     return kws_per_node, rule_finder_dict, rule_values_dict
 
+def get_kat_idx_edges(G, beta = 0.001, max_power = 5):
+
+    # initialise where we store result
+    res = dict()
+    
+    # initialise adjacency matrix sorted by node_id (ascending)
+    nodelist = sorted(list(G.nodes()))
+    adj = nx.adjacency_matrix(G, nodelist = nodelist)
+
+    # get edge katz index for each power of adj matrix
+    for k in range(1, max_power + 1):
+        mat = (adj ** k).tocoo()
+
+        for i, j, num_paths in zip(mat.row, mat.col, mat.data):
+            if i == j:
+                continue
+            u, v = nodelist[i], nodelist[j]
+            w = num_paths * (beta**k)
+
+            if (u, v) not in res:
+                res[(u, v)] = w
+            else:
+                res[(u, v)] += w
+            
+    # we count double as this is undirected
+    for pair in res:
+        res[pair] /= 2
+        
+    return res
+
 def feature_extractor(edgelist, G, node_info, trainval = None):
     """
     Enrich edgelist with graph-based edge features
@@ -156,6 +186,7 @@ def feature_extractor(edgelist, G, node_info, trainval = None):
     AA  = transform_generator_to_dict(nx.adamic_adar_index(G, ebunch))
     PA  = transform_generator_to_dict(nx.preferential_attachment(G, ebunch))
     CNC  = transform_generator_to_dict(nx.common_neighbor_centrality(G, ebunch))
+    katz_idx = get_kat_idx_edges(G, beta = 0.05, max_power = 5)
 
     # append new columns
     return (edgelist
@@ -179,6 +210,7 @@ def feature_extractor(edgelist, G, node_info, trainval = None):
         .assign(CF_PA  = lambda df_: [enhance(edge,  PA, nx.preferential_attachment, "CF") for edge in zip(df_.node1, df_.node2)])
         .assign(SCF_PA = lambda df_: [enhance(edge, PA, nx.preferential_attachment, "SCF") for edge in zip(df_.node1, df_.node2)])
         .assign(PA_log = lambda df_: np.log(df_.PA))
+        .assign(katz_idx = lambda df_: [katz_idx.get((u, v), 0) for u, v in zip(df_.node1, df_.node2)])
     )
 
     # .assign(dr_lift        = lambda df_: [get_dr_count(edge) for edge in zip(df_.node1, df_.node2)])

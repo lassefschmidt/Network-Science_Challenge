@@ -19,6 +19,22 @@ import pandas as pd
 import warnings
 warnings.simplefilter(action = "ignore", category = np.VisibleDeprecationWarning)
 
+def set_reproducible():
+    # The below is necessary to have reproducible behavior.
+    import random as rn
+    import os
+    os.environ['PYTHONHASHSEED'] = '0'
+    # The below is necessary for starting Numpy generated random numbers
+    # in a well-defined initial state.
+    np.random.seed(17)
+    # The below is necessary for starting core Python generated random numbers
+    # in a well-defined state.
+    rn.seed(12345)
+    # same for pytorch
+    random_seed = 1 # or any of your favorite number 
+    torch.manual_seed(random_seed)
+    torch.cuda.manual_seed(random_seed)
+
 class Encoder(torch.nn.Module):
     def __init__(self, in_channels, out_channels, scaling_factor, num_propagations, teleport_probability, dropout):
         super(Encoder, self).__init__()
@@ -93,6 +109,9 @@ def get_device(model = None):
     return device
 
 def train_validate(config):
+    # ensure reproduction
+    set_reproducible()
+    
     # how many epochs we want to train for (at maximum)
     max_epochs = int(config["max_epochs"])
 
@@ -172,7 +191,7 @@ def train_validate(config):
         
         ##SAVE current best models##
         if config["save"]:
-            if val_acc > max_val_acc:
+            if val_acc >= max_val_acc:
                 max_val_acc = val_acc
                 path = os.path.abspath("")+"\\autoencoder.pt"
                 torch.save(model.state_dict(), path)
