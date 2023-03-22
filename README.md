@@ -10,3 +10,7 @@ Modeling:
 - finetune XGBoost
 - use MLP (same input as XGBOOST) to predict links
 - use Graph Attention Network (GATConv Layers in Pytorch Geometric) --> maybe use VGNAE similarities as edge weights (?), but probably bad idea and just use GATConv directly (see https://github.com/PetarV-/GAT)
+
+Great papers and stuff to cite:
+- https://graph-neural-networks.github.io/static/file/chapter10.pdf
+- https://mdpi-res.com/d_attachment/make/make-02-00036/article_deploy/make-02-00036-v2.pdf?version=1608552901
