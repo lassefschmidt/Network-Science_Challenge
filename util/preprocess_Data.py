@@ -209,6 +209,7 @@ def feature_extractor(edgelist, G, node_info, trainval = None):
     CNC  = transform_generator_to_dict(nx.common_neighbor_centrality(G, ebunch))
     katz_idx = get_kat_idx_edges(G, beta = 0.05, max_power = 5)
 
+
     # append new columns
     return (edgelist
         # node_info features

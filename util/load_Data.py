@@ -125,7 +125,7 @@ def load(testing_ratio = 0.2):
     # build graph
     G = prepData.fetch_graph(trainval_tf)
 
-    # generate train and validation data (postive edges)
+    # generate train and validation data (positive edges)
     G_train, train_pos_edges, val_pos_edges = train_val_split_pos_edges(G, trainval_tf, testing_ratio = testing_ratio)
 
     # validate that graph is still connected
