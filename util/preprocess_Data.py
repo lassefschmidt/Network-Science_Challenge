@@ -135,9 +135,21 @@ def get_sknetwork_features(G, ebunch, feature_name):
     # fit and predict
     scorer = scorer.fit(adj)
     return scorer.predict(ebunch)
-    
 
-def feature_extractor(edgelist, G, node_info, trainval = None):
+def get_simrank(G, G_train, edgelist_test, edgelist_trainval):
+    simrank_G_full = nx.simrank_similarity(G)
+    simrank_G = dict()
+    for u, v in zip(edgelist_test.node1, edgelist_test.node2):
+        simrank_G[(u, v)] = simrank_G_full[u][v]
+
+    simrank_G_train_full = nx.simrank_similarity(G_train)
+    simrank_G_train = dict()
+    for u, v in zip(edgelist_trainval.node1, edgelist_trainval.node2):
+        simrank_G_train[(u, v)] = simrank_G_train_full[u][v]    
+
+    return simrank_G, simrank_G_train
+
+def feature_extractor(edgelist, G, node_info, simrank, trainval = None):
     """
     Enrich edgelist with graph-based edge features
     (e.g. resource allocation index, jaccard coefficient, etc.)
@@ -209,7 +221,6 @@ def feature_extractor(edgelist, G, node_info, trainval = None):
     CNC  = transform_generator_to_dict(nx.common_neighbor_centrality(G, ebunch))
     katz_idx = get_kat_idx_edges(G, beta = 0.05, max_power = 5)
 
-
     # append new columns
     return (edgelist
         # node_info features
@@ -238,6 +249,7 @@ def feature_extractor(edgelist, G, node_info, trainval = None):
         .assign(PA_log = lambda df_: np.log(df_.PA))
         # global edge features
         .assign(katz_idx = lambda df_: [katz_idx.get((u, v), 0) for u, v in zip(df_.node1, df_.node2)])
+        .assign(simrank  = lambda df_: [simrank[edge] for edge in zip(df_.node1, df_.node2)])        
     )
 
     # .assign(dr_lift        = lambda df_: [get_dr_count(edge) for edge in zip(df_.node1, df_.node2)])
