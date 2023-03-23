@@ -14,6 +14,7 @@ from ray.tune import JupyterNotebookReporter
 import numpy as np
 from sklearn.metrics import accuracy_score, roc_auc_score
 import pandas as pd
+import networkx as nx # graph data
 
 # ignore warnings that show in every raytune run
 import warnings
@@ -51,6 +52,25 @@ class Encoder(torch.nn.Module):
         x = F.normalize(x,p=2,dim=1) * self.scaling_factor
         x = self.propagate(x, edge_index)
         return x, x_
+    
+def enrich_node_info(G, node_info):
+
+    # compute graph-based node features
+    DCT = nx.degree_centrality(G)
+    BCT = nx.betweenness_centrality(G)
+    KCT = nx.katz_centrality(G, alpha = 0.01)
+    PR  = nx.pagerank(G)
+    HUB, AUTH = nx.hits(G)
+
+    return (node_info
+        .assign(KEYS = lambda df_: df_.sum(axis = 1))
+        .assign(DCT  = lambda df_: [DCT[node]  for node in df_.index])
+        .assign(BCT  = lambda df_: [BCT[node]  for node in df_.index])
+        .assign(KCT  = lambda df_: [KCT[node]  for node in df_.index])
+        .assign(PR   = lambda df_: [PR[node]   for node in df_.index])
+        .assign(HUB  = lambda df_: [HUB[node]  for node in df_.index])
+        .assign(AUTH = lambda df_: [AUTH[node] for node in df_.index])
+    )
 
 def load(testing_ratio = 0.3):
     # load data
@@ -62,13 +82,30 @@ def load(testing_ratio = 0.3):
         .assign(val_mask = lambda df_: ~df_.train_mask)
     )
 
+    # enrich node_info
+    print("Enriching node features...")
+    node_info_train = enrich_node_info(G_train, node_info)
+    node_info_trainval = enrich_node_info(G, node_info)
+
     # initialise PyTorch Geometric Dataset
-    data = Data(x = torch.tensor(node_info.values, dtype = torch.float32),
+    print("Create PyTorch Geometric dataset...")
+    data = Data(
+                # node features
+                x = torch.tensor(node_info_train.values, dtype = torch.float32),
+                x_trainval = torch.tensor(node_info_trainval.values, dtype = torch.float32),
+                # train edges
+                train_edges = torch.tensor(
+                    trainval_tf.loc[trainval_tf.train_mask == 1][["node1", "node2"]].values
+                ).T,
                 train_pos_edges = torch.tensor(
                     trainval_tf.loc[(trainval_tf.y == 1) & (trainval_tf.train_mask == 1)][["node1", "node2"]].values
                 ).T,
                 train_neg_edges = torch.tensor(
                     trainval_tf.loc[(trainval_tf.y == 0) & (trainval_tf.train_mask == 1)][["node1", "node2"]].values
+                ).T,
+                # val edges
+                val_edges = torch.tensor(
+                    trainval_tf.loc[trainval_tf.val_mask == 1][["node1", "node2"]].values
                 ).T,
                 val_pos_edges = torch.tensor(
                     trainval_tf.loc[(trainval_tf.y == 1) & (trainval_tf.val_mask == 1)][["node1", "node2"]].values
@@ -76,18 +113,14 @@ def load(testing_ratio = 0.3):
                 val_neg_edges = torch.tensor(
                     trainval_tf.loc[(trainval_tf.y == 0) & (trainval_tf.val_mask == 1)][["node1", "node2"]].values
                 ).T,
-                train_edges = torch.tensor(
-                    trainval_tf.loc[trainval_tf.train_mask == 1][["node1", "node2"]].values
-                ).T,
-                val_edges = torch.tensor(
-                    trainval_tf.loc[trainval_tf.val_mask == 1][["node1", "node2"]].values
-                ).T,
+                # trainval edges                
                 trainval_edges = torch.tensor(
                     trainval_tf[["node1", "node2"]].values
                 ).T,
                 trainval_pos_edges = torch.tensor(
                     trainval_tf.loc[trainval_tf.y == 1][["node1", "node2"]].values
                 ).T,
+                # test edges
                 test_edges = torch.tensor(
                     test_tf.values
                 ).T)
@@ -133,7 +166,7 @@ def train_validate(config):
     optimizer = torch.optim.AdamW(model.parameters(), lr = config["lr"], weight_decay = config["wd"])
 
     # metrics
-    max_val_acc = 0
+    max_val_auc = 0
 
     # helper function
     def validate(pos_edges, neg_edges):
@@ -156,7 +189,7 @@ def train_validate(config):
             .assign(pred = lambda df_: (df_.pred_probas > df_.pred_probas.median()).astype(int))
         )
         # compute scores
-        auc = roc_auc_score(y, pred_probas)
+        auc = roc_auc_score(y, pred.pred)
         acc = accuracy_score(y, pred.pred)
 
         return auc, acc
@@ -191,20 +224,20 @@ def train_validate(config):
         
         ##SAVE current best models##
         if config["save"]:
-            if val_acc >= max_val_acc:
-                max_val_acc = val_acc
+            if val_auc >= max_val_auc:
+                max_val_auc = val_auc
                 path = os.path.abspath("")+"\\autoencoder.pt"
                 torch.save(model.state_dict(), path)
 
         ##REPORT##
         if config["verbose"]:          
-            print('Epoch: [{}/{}], Train Loss: {:.4f}, Val Loss: {:.4f}, Train ACC: {:.4f}, Val ACC: {:.4f}'.format(epoch, max_epochs,
+            print('Epoch: [{}/{}], Train Loss: {:.4f}, Val Loss: {:.4f}, Train AUC: {:.4f}, Val AUC: {:.4f}'.format(epoch, max_epochs,
                                                                                                                     trn_loss, val_loss,
-                                                                                                                    trn_acc, val_acc))
+                                                                                                                    trn_auc, val_auc))
 
         if config["ray"]:
             tune.report(trn_loss = trn_loss, val_loss = val_loss,
-                        trn_auc = trn_auc, val_auc = val_auc, max_val_acc = max_val_acc,
+                        trn_auc = trn_auc, val_auc = val_auc, max_val_auc = max_val_auc,
                         trn_acc = trn_acc, val_acc = val_acc)
             
 def get_embeddings(model, x, pos_edges):
@@ -234,7 +267,7 @@ def run_ray_experiment(train_func, config, ray_path, num_samples, metric_columns
         parameter_columns= parameter_columns,
         max_column_length = 15,
         max_progress_rows = 20,
-        max_report_frequency = 1, # refresh output table every second
+        max_report_frequency = 10, # refresh output table every ten seconds
         print_intermediate_tables = True
     )
 
