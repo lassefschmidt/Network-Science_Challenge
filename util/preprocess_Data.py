@@ -2,8 +2,8 @@
 from apyori import apriori # generate decision rules
 from itertools import combinations
 import networkx as nx # graph data
+import sknetwork
 import numpy as np
-from numpy.linalg import norm
 
 def clean_edgelist(edgelist):
     """
@@ -116,6 +116,27 @@ def get_kat_idx_edges(G, beta = 0.001, max_power = 5):
         
     return res
 
+def get_sknetwork_features(G, ebunch, feature_name):
+
+    # get objects we need to compute sknetwork features
+    nodelist = sorted(list(G.nodes()))
+    adj = nx.adjacency_matrix(G, nodelist = nodelist).toarray()
+
+    # get sknetwork feature
+    if feature_name == "SaltonIndex":
+        scorer = sknetwork.linkpred.SaltonIndex()
+    elif feature_name == "SorensenIndex":
+        scorer = sknetwork.linkpred.SorensenIndex()
+    elif feature_name == "HubPromotedIndex":
+        scorer = sknetwork.linkpred.HubPromotedIndex()
+    elif feature_name == "HubDepressedIndex":
+        scorer =  sknetwork.linkpred.HubDepressedIndex()
+
+    # fit and predict
+    scorer = scorer.fit(adj)
+    return scorer.predict(ebunch)
+    
+
 def feature_extractor(edgelist, G, node_info, trainval = None):
     """
     Enrich edgelist with graph-based edge features
@@ -198,18 +219,23 @@ def feature_extractor(edgelist, G, node_info, trainval = None):
         .assign(source_DCT  = lambda df_: [DCT[node] for node in df_.node1])
         .assign(target_DCT  = lambda df_: [DCT[node] for node in df_.node2])
         .assign(BCT_diff    = lambda df_: [BCT[v]- BCT[u] for u, v in zip(df_.node1, df_.node2)])
-        # edge features
+        # local edge features
         .assign(graph_distance = lambda df_: [nx.shortest_path_length(G, source = u, target = v) for u, v in zip(df_.node1, df_.node2)])
         .assign(CNC    = lambda df_: [CNC[edge] for edge in zip(df_.node1, df_.node2)])
         .assign(RA     = lambda df_: [RA[edge]  for edge in zip(df_.node1, df_.node2)])
         .assign(JCC    = lambda df_: [JCC[edge] for edge in zip(df_.node1, df_.node2)])
         .assign(AA     = lambda df_: [AA[edge]  for edge in zip(df_.node1, df_.node2)])
         .assign(PA     = lambda df_: [PA[edge]  for edge in zip(df_.node1, df_.node2)])
+        .assign(SaI    = get_sknetwork_features(G, ebunch, "SaltonIndex"))
+        .assign(SoI    = get_sknetwork_features(G, ebunch, "SorensenIndex"))
+        .assign(HProm  = get_sknetwork_features(G, ebunch, "HubPromotedIndex"))
+        .assign(HDem   = get_sknetwork_features(G, ebunch, "HubDepressedIndex"))
         .assign(CF_RA  = lambda df_: [enhance(edge,  RA, nx.resource_allocation_index, "CF") for edge in zip(df_.node1, df_.node2)])
         .assign(SCF_RA = lambda df_: [enhance(edge, RA, nx.resource_allocation_index, "SCF") for edge in zip(df_.node1, df_.node2)])
         .assign(CF_PA  = lambda df_: [enhance(edge,  PA, nx.preferential_attachment, "CF") for edge in zip(df_.node1, df_.node2)])
         .assign(SCF_PA = lambda df_: [enhance(edge, PA, nx.preferential_attachment, "SCF") for edge in zip(df_.node1, df_.node2)])
         .assign(PA_log = lambda df_: np.log(df_.PA))
+        # global edge features
         .assign(katz_idx = lambda df_: [katz_idx.get((u, v), 0) for u, v in zip(df_.node1, df_.node2)])
     )
 
