@@ -137,6 +137,10 @@ def get_sknetwork_features(G, ebunch, feature_name):
     return scorer.predict(ebunch)
 
 def get_simrank(G, G_train, edgelist_test, edgelist_trainval):
+    """Returns simrank of G and G_train
+    G, G_train graphs
+    edgelist_test, edgelist_trainval list of edges in test and train
+    """
     simrank_G_full = nx.simrank_similarity(G)
     simrank_G = dict()
     for u, v in zip(edgelist_test.node1, edgelist_test.node2):
@@ -148,6 +152,45 @@ def get_simrank(G, G_train, edgelist_test, edgelist_trainval):
         simrank_G_train[(u, v)] = simrank_G_train_full[u][v]    
 
     return simrank_G, simrank_G_train
+
+def rooted_pagerank(G, node, d = 0.85, epsilon = 1e-4):
+    """ Returns rooted pagerank vector
+    g graph
+    node root
+    d damping coefficient
+    """
+    ordered_nodes = sorted(G.nodes())
+    root = ordered_nodes.index(node)
+    adjecancy = nx.to_numpy_array(G, nodelist = ordered_nodes)
+    m = np.copy(adjecancy)
+
+    for i in range(len(G)):
+        row_norm = np.linalg.norm(m[i], ord = 1)
+        if row_norm != 0:
+            m[i] = m[i] / row_norm
+
+    m = m.transpose()
+
+    rootvec = np.zeros(len(G))
+    rootvec[root] = 1
+
+    vect = np.random.rand(len(G))
+    vect = vect / np.linalg.norm(vect, ord = 1)
+    last_vect = np.ones(len(G)) * 100 # to ensure that does not hit epsilon randomly in first step
+
+    iterations = 0
+    while np.linalg.norm(vect - last_vect, ord = 2) > epsilon:
+        last_vect = vect.copy()
+        vect = d * np.matmul(m, vect) + (1 - d) * rootvec
+        iterations += 1
+
+    eigenvector = vect / np.linalg.norm(vect, ord = 1)
+
+    eigen_dict = {}
+    for i in range(len(ordered_nodes)):
+        eigen_dict[ordered_nodes[i]] = eigenvector[i]
+
+    return eigen_dict
 
 def feature_extractor(edgelist, G, node_info, simrank, trainval = None):
     """
@@ -208,7 +251,7 @@ def feature_extractor(edgelist, G, node_info, simrank, trainval = None):
             G.add_edge(u, v)
 
         return result
-    
+
     # compute graph-based node features
     DCT = nx.degree_centrality(G)
     BCT = nx.betweenness_centrality(G)
@@ -222,35 +265,65 @@ def feature_extractor(edgelist, G, node_info, simrank, trainval = None):
     katz_idx = get_kat_idx_edges(G, beta = 0.05, max_power = 5)
 
     # append new columns
-    return (edgelist
-        # node_info features
-        .assign(nodeInfo_dupl  = lambda df_: [1 if (node_info.loc[u].values == node_info.loc[v].values).all() else 0 for u, v in zip(df_.node1, df_.node2)])
-        #.assign(nodeInfo_CS    = lambda df_: [cosine_similarity(node_info.loc[u], node_info.loc[v]) for u, v in zip(df_.node1, df_.node2)])
-        .assign(nodeInfo_diff  = lambda df_: [sum(abs(node_info.loc[u] - node_info.loc[v])) for u, v in zip(df_.node1, df_.node2)])
-        # node features
-        .assign(source_DCT  = lambda df_: [DCT[node] for node in df_.node1])
-        .assign(target_DCT  = lambda df_: [DCT[node] for node in df_.node2])
-        .assign(BCT_diff    = lambda df_: [BCT[v]- BCT[u] for u, v in zip(df_.node1, df_.node2)])
-        # local edge features
-        .assign(graph_distance = lambda df_: [nx.shortest_path_length(G, source = u, target = v) for u, v in zip(df_.node1, df_.node2)])
-        .assign(CNC    = lambda df_: [CNC[edge] for edge in zip(df_.node1, df_.node2)])
-        .assign(RA     = lambda df_: [RA[edge]  for edge in zip(df_.node1, df_.node2)])
-        .assign(JCC    = lambda df_: [JCC[edge] for edge in zip(df_.node1, df_.node2)])
-        .assign(AA     = lambda df_: [AA[edge]  for edge in zip(df_.node1, df_.node2)])
-        .assign(PA     = lambda df_: [PA[edge]  for edge in zip(df_.node1, df_.node2)])
-        .assign(SaI    = get_sknetwork_features(G, ebunch, "SaltonIndex"))
-        .assign(SoI    = get_sknetwork_features(G, ebunch, "SorensenIndex"))
-        .assign(HProm  = get_sknetwork_features(G, ebunch, "HubPromotedIndex"))
-        .assign(HDem   = get_sknetwork_features(G, ebunch, "HubDepressedIndex"))
-        .assign(CF_RA  = lambda df_: [enhance(edge,  RA, nx.resource_allocation_index, "CF") for edge in zip(df_.node1, df_.node2)])
-        .assign(SCF_RA = lambda df_: [enhance(edge, RA, nx.resource_allocation_index, "SCF") for edge in zip(df_.node1, df_.node2)])
-        .assign(CF_PA  = lambda df_: [enhance(edge,  PA, nx.preferential_attachment, "CF") for edge in zip(df_.node1, df_.node2)])
-        .assign(SCF_PA = lambda df_: [enhance(edge, PA, nx.preferential_attachment, "SCF") for edge in zip(df_.node1, df_.node2)])
-        .assign(PA_log = lambda df_: np.log(df_.PA))
-        # global edge features
-        .assign(katz_idx = lambda df_: [katz_idx.get((u, v), 0) for u, v in zip(df_.node1, df_.node2)])
-        .assign(simrank  = lambda df_: [simrank[edge] for edge in zip(df_.node1, df_.node2)])        
-    )
+    if simrank is None:
+        return (edgelist
+            # node_info features
+            .assign(nodeInfo_dupl  = lambda df_: [1 if (node_info.loc[u].values == node_info.loc[v].values).all() else 0 for u, v in zip(df_.node1, df_.node2)])
+            #.assign(nodeInfo_CS    = lambda df_: [cosine_similarity(node_info.loc[u], node_info.loc[v]) for u, v in zip(df_.node1, df_.node2)])
+            .assign(nodeInfo_diff  = lambda df_: [sum(abs(node_info.loc[u] - node_info.loc[v])) for u, v in zip(df_.node1, df_.node2)])
+            # node features
+            .assign(source_DCT  = lambda df_: [DCT[node] for node in df_.node1])
+            .assign(target_DCT  = lambda df_: [DCT[node] for node in df_.node2])
+            .assign(BCT_diff    = lambda df_: [BCT[v]- BCT[u] for u, v in zip(df_.node1, df_.node2)])
+            # local edge features
+            .assign(graph_distance = lambda df_: [nx.shortest_path_length(G, source = u, target = v) for u, v in zip(df_.node1, df_.node2)])
+            .assign(CNC    = lambda df_: [CNC[edge] for edge in zip(df_.node1, df_.node2)])
+            .assign(RA     = lambda df_: [RA[edge]  for edge in zip(df_.node1, df_.node2)])
+            .assign(JCC    = lambda df_: [JCC[edge] for edge in zip(df_.node1, df_.node2)])
+            .assign(AA     = lambda df_: [AA[edge]  for edge in zip(df_.node1, df_.node2)])
+            .assign(PA     = lambda df_: [PA[edge]  for edge in zip(df_.node1, df_.node2)])
+            .assign(SaI    = get_sknetwork_features(G, ebunch, "SaltonIndex"))
+            .assign(SoI    = get_sknetwork_features(G, ebunch, "SorensenIndex"))
+            .assign(HProm  = get_sknetwork_features(G, ebunch, "HubPromotedIndex"))
+            .assign(HDem   = get_sknetwork_features(G, ebunch, "HubDepressedIndex"))
+            .assign(CF_RA  = lambda df_: [enhance(edge,  RA, nx.resource_allocation_index, "CF") for edge in zip(df_.node1, df_.node2)])
+            .assign(SCF_RA = lambda df_: [enhance(edge, RA, nx.resource_allocation_index, "SCF") for edge in zip(df_.node1, df_.node2)])
+            .assign(CF_PA  = lambda df_: [enhance(edge,  PA, nx.preferential_attachment, "CF") for edge in zip(df_.node1, df_.node2)])
+            .assign(SCF_PA = lambda df_: [enhance(edge, PA, nx.preferential_attachment, "SCF") for edge in zip(df_.node1, df_.node2)])
+            .assign(PA_log = lambda df_: np.log(df_.PA))
+            # global edge features
+            .assign(katz_idx = lambda df_: [katz_idx.get((u, v), 0) for u, v in zip(df_.node1, df_.node2)])
+        )
+    else:
+        return (edgelist
+            # node_info features
+            .assign(nodeInfo_dupl  = lambda df_: [1 if (node_info.loc[u].values == node_info.loc[v].values).all() else 0 for u, v in zip(df_.node1, df_.node2)])
+            #.assign(nodeInfo_CS    = lambda df_: [cosine_similarity(node_info.loc[u], node_info.loc[v]) for u, v in zip(df_.node1, df_.node2)])
+            .assign(nodeInfo_diff  = lambda df_: [sum(abs(node_info.loc[u] - node_info.loc[v])) for u, v in zip(df_.node1, df_.node2)])
+            # node features
+            .assign(source_DCT  = lambda df_: [DCT[node] for node in df_.node1])
+            .assign(target_DCT  = lambda df_: [DCT[node] for node in df_.node2])
+            .assign(BCT_diff    = lambda df_: [BCT[v]- BCT[u] for u, v in zip(df_.node1, df_.node2)])
+            # local edge features
+            .assign(graph_distance = lambda df_: [nx.shortest_path_length(G, source = u, target = v) for u, v in zip(df_.node1, df_.node2)])
+            .assign(CNC    = lambda df_: [CNC[edge] for edge in zip(df_.node1, df_.node2)])
+            .assign(RA     = lambda df_: [RA[edge]  for edge in zip(df_.node1, df_.node2)])
+            .assign(JCC    = lambda df_: [JCC[edge] for edge in zip(df_.node1, df_.node2)])
+            .assign(AA     = lambda df_: [AA[edge]  for edge in zip(df_.node1, df_.node2)])
+            .assign(PA     = lambda df_: [PA[edge]  for edge in zip(df_.node1, df_.node2)])
+            .assign(SaI    = get_sknetwork_features(G, ebunch, "SaltonIndex"))
+            .assign(SoI    = get_sknetwork_features(G, ebunch, "SorensenIndex"))
+            .assign(HProm  = get_sknetwork_features(G, ebunch, "HubPromotedIndex"))
+            .assign(HDem   = get_sknetwork_features(G, ebunch, "HubDepressedIndex"))
+            .assign(CF_RA  = lambda df_: [enhance(edge,  RA, nx.resource_allocation_index, "CF") for edge in zip(df_.node1, df_.node2)])
+            .assign(SCF_RA = lambda df_: [enhance(edge, RA, nx.resource_allocation_index, "SCF") for edge in zip(df_.node1, df_.node2)])
+            .assign(CF_PA  = lambda df_: [enhance(edge,  PA, nx.preferential_attachment, "CF") for edge in zip(df_.node1, df_.node2)])
+            .assign(SCF_PA = lambda df_: [enhance(edge, PA, nx.preferential_attachment, "SCF") for edge in zip(df_.node1, df_.node2)])
+            .assign(PA_log = lambda df_: np.log(df_.PA))
+            # global edge features
+            .assign(katz_idx = lambda df_: [katz_idx.get((u, v), 0) for u, v in zip(df_.node1, df_.node2)])
+            .assign(simrank  = lambda df_: [simrank[edge] for edge in zip(df_.node1, df_.node2)])        
+        )
 
     # .assign(dr_lift        = lambda df_: [get_dr_count(edge) for edge in zip(df_.node1, df_.node2)])
     # helper function to get count of all relevant decision rules between source and target

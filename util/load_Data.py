@@ -147,7 +147,7 @@ def load_transform(testing_ratio = 0.2, simrank=False):
     (G, G_train, node_info, train_tf, val_tf, trainval_tf, test, test_tf) = load(testing_ratio)
 
     # running simrank algorithm on both G and G_train
-    if simrank==1:
+    if simrank:
         simrank_G, simrank_G_train = prepData.get_simrank(G, G_train, test_tf, trainval_tf,)
     else:
         simrank_G, simrank_G_train = None, None
