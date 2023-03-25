@@ -6,6 +6,7 @@ import copy
 import networkx as nx # graph data
 import numpy as np
 import pandas as pd
+import json
 import random
 from sklearn.model_selection import train_test_split
 
@@ -146,14 +147,24 @@ def load_transform(testing_ratio = 0.2):
     """
     (G, G_train, node_info, train_tf, val_tf, trainval_tf, test, test_tf) = load(testing_ratio)
 
+    # read json files for rank algorithms
+    with open("data/simrank_test.json", "r") as file:
+        simrank_test = json.load(file)
+    with open("data/simrank_trainval.json", "r") as file:
+        simrank_trainval = json.load(file)
+    with open("data/pagerank_test.json", "r") as file:
+        pagerank_test = json.load(file)
+    with open("data/pagerank_trainval.json", "r") as file:
+        pagerank_trainval = json.load(file)
+
     # enrich train and validation data
     print("Enriching train data...")
-    train_tf = prepData.feature_extractor(train_tf, G_train, node_info)
+    train_tf = prepData.feature_extractor(train_tf, G_train, node_info, simrank_test, simrank_trainval, pagerank_test, pagerank_trainval)
     print("Enriching validation data...")
-    val_tf   = prepData.feature_extractor(val_tf, G_train, node_info)
+    val_tf   = prepData.feature_extractor(val_tf, G_train, node_info, simrank_test, simrank_trainval, pagerank_test, pagerank_trainval)
     # enrich test data
     print("Enriching test data...")
-    test_tf = prepData.feature_extractor(test_tf, G, node_info, trainval = trainval_tf)
+    test_tf = prepData.feature_extractor(test_tf, G, node_info, simrank_test, simrank_trainval, pagerank_test, pagerank_trainval, trainval = trainval_tf)
     
     # split
     X_train, y_train = split_frame(train_tf)

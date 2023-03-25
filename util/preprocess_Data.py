@@ -193,7 +193,7 @@ def rooted_pagerank(G, node, d = 0.85, epsilon = 1e-4):
 
     return eigen_dict
 
-def feature_extractor(edgelist, G, node_info, trainval = None):
+def feature_extractor(edgelist, G, node_info, simrank_test, simrank_trainval, pagerank_test, pagerank_trainval, trainval = None):
     """
     Enrich edgelist with graph-based edge features
     (e.g. resource allocation index, jaccard coefficient, etc.)
@@ -252,17 +252,20 @@ def feature_extractor(edgelist, G, node_info, trainval = None):
             G.add_edge(u, v)
 
         return result
-    
-    def read_rank_json(dictionary, u, v):
+
+    def read_simrank_json(u, v):
         key = str(u)+"_"+str(v)
-        with open("data/"+dictionary+"_test"+".json", "r") as file_test:
-            rank_test = json.load(file_test)
-        with open("data/"+dictionary+"_trainval"+".json", "r") as file_trainval:
-            rank_trainval = json.load(file_trainval)
-        if key in rank_test.keys():
-            return rank_test[key]
-        elif key in rank_trainval.keys():
-            return rank_trainval[key]
+        if key in simrank_test.keys():
+            return simrank_test[key]
+        elif key in simrank_trainval.keys():
+            return simrank_trainval[key]
+    
+    def read_pagerank_json(u, v):
+        key = str(u)+"_"+str(v)
+        if key in pagerank_test.keys():
+            return pagerank_test[key]
+        elif key in pagerank_trainval.keys():
+            return pagerank_trainval[key]
 
     # compute graph-based node features
     DCT = nx.degree_centrality(G)
@@ -304,8 +307,8 @@ def feature_extractor(edgelist, G, node_info, trainval = None):
         .assign(PA_log = lambda df_: np.log(df_.PA))
         # global edge features
         .assign(katz_idx = lambda df_: [katz_idx.get((u, v), 0) for u, v in zip(df_.node1, df_.node2)])
-        .assign(sim_rank = lambda df_: [read_rank_json("simrank", u, v) for u, v in zip(df_.node1, df_.node2)])
-        .assign(root_pagerank = lambda df_: [read_rank_json("pagerank", u, v) for u, v in zip(df_.node1, df_.node2)])
+        .assign(sim_rank = lambda df_: [read_simrank_json(u, v) for u, v in zip(df_.node1, df_.node2)])
+        .assign(root_pagerank = lambda df_: [read_pagerank_json(u, v) for u, v in zip(df_.node1, df_.node2)])
     )
 
     # .assign(dr_lift        = lambda df_: [get_dr_count(edge) for edge in zip(df_.node1, df_.node2)])
