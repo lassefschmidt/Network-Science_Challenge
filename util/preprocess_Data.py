@@ -87,7 +87,38 @@ def get_decision_rules(edgelist, node_info):
 
     return kws_per_node, rule_finder_dict, rule_values_dict
 
-def get_kat_idx_edges(G, beta = 0.001, max_power = 5):
+def get_friendlink(G, max_power = 6):
+
+    # initialise where we store result
+    res = dict()
+    
+    # initialise adjacency matrix sorted by node_id (ascending)
+    nodelist = sorted(list(G.nodes()))
+    adj = nx.adjacency_matrix(G, nodelist = nodelist)
+
+    # initialise normalizing coefficient
+    normalizing_coef = 1
+
+    # get FriendLink score for second to max_power power of adj matrix
+    for k in range(2, max_power + 1):
+        mat = (adj ** k).tocoo()
+        scaling = 1/(k-1)
+        normalizing_coef *= (G.number_of_nodes() - k)
+
+        for i, j, num_paths in zip(mat.row, mat.col, mat.data):
+            if i >= j: # only compute for lower diagonal (undirected graph)
+                continue
+            u, v = nodelist[i], nodelist[j]
+            w = scaling * (num_paths / normalizing_coef)
+
+            if (u, v) not in res:
+                res[(u, v)] = w
+            else:
+                res[(u, v)] += w
+        
+    return res
+
+def get_kat_idx_edges(G, beta = 0.001, max_power = 6):
 
     # initialise where we store result
     res = dict()
@@ -101,7 +132,7 @@ def get_kat_idx_edges(G, beta = 0.001, max_power = 5):
         mat = (adj ** k).tocoo()
 
         for i, j, num_paths in zip(mat.row, mat.col, mat.data):
-            if i == j:
+            if i >= j: # only compute for lower diagonal (undirected graph)
                 continue
             u, v = nodelist[i], nodelist[j]
             w = num_paths * (beta**k)
@@ -110,10 +141,6 @@ def get_kat_idx_edges(G, beta = 0.001, max_power = 5):
                 res[(u, v)] = w
             else:
                 res[(u, v)] += w
-            
-    # we count double as this is undirected
-    for pair in res:
-        res[pair] /= 2
         
     return res
 
@@ -162,8 +189,8 @@ def rooted_pagerank(G, node, d = 0.85, epsilon = 1e-4):
     """
     ordered_nodes = sorted(G.nodes())
     root = ordered_nodes.index(node)
-    adjecancy = nx.to_numpy_array(G, nodelist = ordered_nodes)
-    m = np.copy(adjecancy)
+    adj = nx.to_numpy_array(G, nodelist = ordered_nodes)
+    m = np.copy(adj)
 
     for i in range(len(G)):
         row_norm = np.linalg.norm(m[i], ord = 1)
@@ -277,7 +304,8 @@ def feature_extractor(edgelist, G, node_info, simrank_test, simrank_trainval, pa
     AA  = transform_generator_to_dict(nx.adamic_adar_index(G, ebunch))
     PA  = transform_generator_to_dict(nx.preferential_attachment(G, ebunch))
     CNC  = transform_generator_to_dict(nx.common_neighbor_centrality(G, ebunch))
-    katz_idx = get_kat_idx_edges(G, beta = 0.05, max_power = 5)
+    katz_idx = get_kat_idx_edges(G, beta = 0.05, max_power = 6)
+    friendLink = get_friendlink(G, max_power = 6)
 
     # append new columns
     return (edgelist
@@ -293,60 +321,22 @@ def feature_extractor(edgelist, G, node_info, simrank_test, simrank_trainval, pa
         .assign(graph_distance = lambda df_: [nx.shortest_path_length(G, source = u, target = v) for u, v in zip(df_.node1, df_.node2)])
         .assign(CNC    = lambda df_: [CNC[edge] for edge in zip(df_.node1, df_.node2)])
         .assign(RA     = lambda df_: [RA[edge]  for edge in zip(df_.node1, df_.node2)])
+        .assign(CF_RA  = lambda df_: [enhance(edge,  RA, nx.resource_allocation_index, "CF") for edge in zip(df_.node1, df_.node2)])
+        .assign(SCF_RA = lambda df_: [enhance(edge, RA, nx.resource_allocation_index, "SCF") for edge in zip(df_.node1, df_.node2)])
         .assign(JCC    = lambda df_: [JCC[edge] for edge in zip(df_.node1, df_.node2)])
         .assign(AA     = lambda df_: [AA[edge]  for edge in zip(df_.node1, df_.node2)])
         .assign(PA     = lambda df_: [PA[edge]  for edge in zip(df_.node1, df_.node2)])
+        .assign(PA_log = lambda df_: np.log(df_.PA))
+        .assign(CF_PA  = lambda df_: [enhance(edge,  PA, nx.preferential_attachment, "CF") for edge in zip(df_.node1, df_.node2)])
+        .assign(SCF_PA = lambda df_: [enhance(edge, PA, nx.preferential_attachment, "SCF") for edge in zip(df_.node1, df_.node2)])
         .assign(SaI    = get_sknetwork_features(G, ebunch, "SaltonIndex"))
         .assign(SoI    = get_sknetwork_features(G, ebunch, "SorensenIndex"))
         .assign(HProm  = get_sknetwork_features(G, ebunch, "HubPromotedIndex"))
         .assign(HDem   = get_sknetwork_features(G, ebunch, "HubDepressedIndex"))
-        .assign(CF_RA  = lambda df_: [enhance(edge,  RA, nx.resource_allocation_index, "CF") for edge in zip(df_.node1, df_.node2)])
-        .assign(SCF_RA = lambda df_: [enhance(edge, RA, nx.resource_allocation_index, "SCF") for edge in zip(df_.node1, df_.node2)])
-        .assign(CF_PA  = lambda df_: [enhance(edge,  PA, nx.preferential_attachment, "CF") for edge in zip(df_.node1, df_.node2)])
-        .assign(SCF_PA = lambda df_: [enhance(edge, PA, nx.preferential_attachment, "SCF") for edge in zip(df_.node1, df_.node2)])
-        .assign(PA_log = lambda df_: np.log(df_.PA))
         # global edge features
         .assign(katz_idx = lambda df_: [katz_idx.get((u, v), 0) for u, v in zip(df_.node1, df_.node2)])
         .assign(sim_rank = lambda df_: [read_simrank_json(u, v) for u, v in zip(df_.node1, df_.node2)])
         .assign(root_pagerank = lambda df_: [read_pagerank_json(u, v) for u, v in zip(df_.node1, df_.node2)])
+        # quasi-local edge features
+        .assign(friendLink = lambda df_: [friendLink.get((u, v), 0) for u, v in zip(df_.node1, df_.node2)])
     )
-
-    # .assign(dr_lift        = lambda df_: [get_dr_count(edge) for edge in zip(df_.node1, df_.node2)])
-    # helper function to get count of all relevant decision rules between source and target
-    def get_dr_count(edge):
-        (u, v) = edge
-        u_emb = kws_per_node.kws.loc[u]
-        v_emb = kws_per_node.kws.loc[v]
-        # create list of all possible entries
-        u_perm = u_emb + list(combinations(u_emb, r = 2))
-        v_perm = v_emb + list(combinations(v_emb, r = 2))
-        # loop over rules from u -> v and from v -> u
-        rules = set()
-        for key in u_perm:
-            targets = rule_finder_dict.get(key, None)
-            if targets is not None:
-                rules = rules.union([(key, target) for target in set(v_perm).intersection(set(targets))])
-        for key in v_perm:
-            targets = rule_finder_dict.get(key, None)
-            if targets is not None:
-                rules = rules.union([(key, target) for target in set(u_perm).intersection(set(targets))])
-
-        lift = sum([rule_values_dict[key]["lift"] for key in rules])
-
-        return lift
-    
-    # get decision rules for keyword embeddings (only those rules that are valid for positive edges)
-    if trainval is None:
-        pos_edges = edgelist.loc[edgelist.y == 1][["node1", "node2"]].values.tolist()
-        neg_edges = edgelist.loc[edgelist.y == 0][["node1", "node2"]].values.tolist()
-    else:
-        pos_edges = trainval.loc[trainval.y == 1][["node1", "node2"]].values.tolist()
-        neg_edges = trainval.loc[trainval.y == 0][["node1", "node2"]].values.tolist()
-
-    kws_per_node, rule_finder_dict, rule_values_dict = get_decision_rules(pos_edges, node_info)
-    _, neg_rule_finder_dict, neg_rule_values_dict    = get_decision_rules(neg_edges, node_info)
-    rule_values_dict = {key: values for key, values in rule_values_dict.items() if key not in neg_rule_values_dict}
-    for key, targets in rule_finder_dict.items():
-        non_targets = neg_rule_finder_dict.get(key, None)
-        if non_targets is not None:
-            rule_finder_dict[key] = set(targets) - set(non_targets)
