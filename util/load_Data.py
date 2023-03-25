@@ -140,26 +140,20 @@ def load(testing_ratio = 0.2):
 
     return (G, G_train, node_info, train_tf, val_tf, trainval_tf, test, test_tf)
 
-def load_transform(testing_ratio = 0.2, simrank=False):
+def load_transform(testing_ratio = 0.2):
     """
     helper function that performs all further pre-processsing necessary for classical ML approaches
     """
     (G, G_train, node_info, train_tf, val_tf, trainval_tf, test, test_tf) = load(testing_ratio)
 
-    # running simrank algorithm on both G and G_train
-    if simrank:
-        simrank_G, simrank_G_train = prepData.get_simrank(G, G_train, test_tf, trainval_tf,)
-    else:
-        simrank_G, simrank_G_train = None, None
-
     # enrich train and validation data
     print("Enriching train data...")
-    train_tf = prepData.feature_extractor(train_tf, G_train, node_info, simrank=simrank_G_train)
+    train_tf = prepData.feature_extractor(train_tf, G_train, node_info)
     print("Enriching validation data...")
-    val_tf   = prepData.feature_extractor(val_tf, G_train, node_info, simrank=simrank_G_train)
+    val_tf   = prepData.feature_extractor(val_tf, G_train, node_info)
     # enrich test data
     print("Enriching test data...")
-    test_tf = prepData.feature_extractor(test_tf, G, node_info, simrank=simrank_G, trainval = trainval_tf)
+    test_tf = prepData.feature_extractor(test_tf, G, node_info, trainval = trainval_tf)
     
     # split
     X_train, y_train = split_frame(train_tf)
