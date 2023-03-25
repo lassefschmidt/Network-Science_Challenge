@@ -193,7 +193,7 @@ def rooted_pagerank(G, node, d = 0.85, epsilon = 1e-4):
 
     return eigen_dict
 
-def feature_extractor(edgelist, G, node_info, simrank, trainval = None):
+def feature_extractor(edgelist, G, node_info, trainval = None):
     """
     Enrich edgelist with graph-based edge features
     (e.g. resource allocation index, jaccard coefficient, etc.)
