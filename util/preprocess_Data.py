@@ -234,6 +234,24 @@ def rooted_pagerank(G, node, d = 0.85, epsilon = 1e-4):
 
     return eigen_dict
 
+def pagerank_avg(G, edgelist):
+    pagerank_scores = nx.pagerank(G, alpha=0.3)
+    PR1 = []
+    # calculate the pagerank average scores
+    for idx, row in edgelist.iterrows():
+        pr1 = (pagerank_scores[row["node1"]] + pagerank_scores[row["node2"]])/2
+        PR1.append((row["node1"], row["node2"], pr1))
+    return PR1
+
+def pagerank_sqdiff(G, edgelist):
+    pagerank_scores = nx.pagerank(G, alpha=0.3)
+    PR2 = []
+    # calculate the rooted pagerank squared difference scores
+    for idx, row in edgelist.iterrows():
+        pr2 = (pagerank_scores[row["node1"]] - pagerank_scores[row["node2"]])**2
+        PR2.append((row["node1"], row["node2"], pr2))
+    return PR2
+
 def feature_extractor(edgelist, G, node_info, simrank_test, simrank_trainval, pagerank_test, pagerank_trainval, n2v, trainval = None):
     """
     Enrich edgelist with graph-based edge features
@@ -318,6 +336,8 @@ def feature_extractor(edgelist, G, node_info, simrank_test, simrank_trainval, pa
     AA  = transform_generator_to_dict(nx.adamic_adar_index(G, ebunch))
     PA  = transform_generator_to_dict(nx.preferential_attachment(G, ebunch))
     CNC  = transform_generator_to_dict(nx.common_neighbor_centrality(G, ebunch))
+    PR1 = transform_generator_to_dict(pagerank_avg(G, edgelist))
+    PR2 = transform_generator_to_dict(pagerank_sqdiff(G, edgelist))
     katz_idx = get_kat_idx_edges(G, beta = 0.05, max_power = 6)
     friendLink = get_friendlink(G, max_power = 6)
 
@@ -350,6 +370,8 @@ def feature_extractor(edgelist, G, node_info, simrank_test, simrank_trainval, pa
         # global edge features
         .assign(katz_idx = lambda df_: [katz_idx.get((u, v), 0) for u, v in zip(df_.node1, df_.node2)])
         .assign(sim_rank = lambda df_: [read_simrank_json(u, v) for u, v in zip(df_.node1, df_.node2)])
+        .assign(PR1 = lambda df_:  [PR1[edge] for edge in zip(df_.node1, df_.node2)])
+        .assign(PR2 = lambda df_:  [PR2[edge] for edge in zip(df_.node1, df_.node2)])
         .assign(root_pagerank = lambda df_: [read_pagerank_json(u, v) for u, v in zip(df_.node1, df_.node2)])
         .assign(node2vec_1 = lambda df_: [n2v[(str(u), str(v))][0] for u, v in zip(df_.node1, df_.node2)])
         .assign(node2vec_2 = lambda df_: [n2v[(str(u), str(v))][1] for u, v in zip(df_.node1, df_.node2)])
