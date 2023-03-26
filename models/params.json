@@ -1,8 +1,8 @@
 {
-  "data": "Data(x_train=[3597, 936], x_trainval=[3597, 936], train_edges=[2, 8372], train_pos_edges=[2, 4174], train_neg_edges=[2, 4198], val_edges=[2, 2093], val_pos_edges=[2, 1043], val_neg_edges=[2, 1050], trainval_edges=[2, 10465], trainval_pos_edges=[2, 5217], test_edges=[2, 3481], x=[3597, 936])",
+  "data": "Data(x=[3597, 937], x_trainval=[3597, 937], train_edges=[2, 8372], train_pos_edges=[2, 4174], train_neg_edges=[2, 4198], val_edges=[2, 2093], val_pos_edges=[2, 1043], val_neg_edges=[2, 1050], trainval_edges=[2, 10465], trainval_pos_edges=[2, 5217], test_edges=[2, 3481])",
   "dropout": 0,
   "enc_channels": 64,
-  "lr": 0.0001,
+  "lr": 0.001,
   "max_epochs": 50,
   "model": "VGNAE",
   "num_prop": 4,

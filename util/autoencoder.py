@@ -75,7 +75,10 @@ def enrich_node_info(G, node_info):
         .assign(PR   = lambda df_: [PR[node]   for node in df_.index])
         .assign(HUB  = lambda df_: [HUB[node]  for node in df_.index])
         .assign(AUTH = lambda df_: [AUTH[node] for node in df_.index])
-        .assign(N2V  = lambda df_: [N2V.wv[node]  for node in df_.index])
+        .assign(N2V  = lambda df_: [N2V.wv[node][0]  for node in df_.index])
+        .assign(N2V  = lambda df_: [N2V.wv[node][1]  for node in df_.index])
+        .assign(N2V  = lambda df_: [N2V.wv[node][2]  for node in df_.index])
+        .assign(N2V  = lambda df_: [N2V.wv[node][3]  for node in df_.index])
     )
 
 def load(testing_ratio = 0.3):
@@ -280,7 +283,7 @@ def run_ray_experiment(train_func, config, ray_path, num_samples, metric_columns
     tuner = tune.Tuner(
         tune.with_resources(
             tune.with_parameters(train_func),
-            resources={"CPU": 16, "GPU": 1}
+            resources={"CPU": 4, "GPU": 0}
         ),
         tune_config = tune.TuneConfig(
             metric = "trn_loss",
