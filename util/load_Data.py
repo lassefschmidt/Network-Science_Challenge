@@ -141,7 +141,7 @@ def load(testing_ratio = 0.2):
 
     return (G, G_train, node_info, train_tf, val_tf, trainval_tf, test, test_tf)
 
-def load_transform(testing_ratio = 0.2):
+def load_transform(testing_ratio = 0.2, n2v_train=False):
     """
     helper function that performs all further pre-processsing necessary for classical ML approaches
     """
@@ -157,14 +157,22 @@ def load_transform(testing_ratio = 0.2):
     with open("data/pagerank_trainval.json", "r") as file:
         pagerank_trainval = json.load(file)
 
+    # get node2vec embeddings for G and G_train
+    if n2v_train:
+        n2v = prepData.get_n2v(G_train)
+        n2v_test = prepData.get_n2v(G)
+    else:
+        n2v = prepData.get_n2v(G)
+        n2v_test = n2v
+
     # enrich train and validation data
     print("Enriching train data...")
-    train_tf = prepData.feature_extractor(train_tf, G_train, node_info, simrank_test, simrank_trainval, pagerank_test, pagerank_trainval)
+    train_tf = prepData.feature_extractor(train_tf, G_train, node_info, simrank_test, simrank_trainval, pagerank_test, pagerank_trainval, n2v)
     print("Enriching validation data...")
-    val_tf   = prepData.feature_extractor(val_tf, G_train, node_info, simrank_test, simrank_trainval, pagerank_test, pagerank_trainval)
+    val_tf   = prepData.feature_extractor(val_tf, G_train, node_info, simrank_test, simrank_trainval, pagerank_test, pagerank_trainval, n2v)
     # enrich test data
     print("Enriching test data...")
-    test_tf = prepData.feature_extractor(test_tf, G, node_info, simrank_test, simrank_trainval, pagerank_test, pagerank_trainval, trainval = trainval_tf)
+    test_tf = prepData.feature_extractor(test_tf, G, node_info, simrank_test, simrank_trainval, pagerank_test, pagerank_trainval, n2v_test, trainval = trainval_tf)
     
     # split
     X_train, y_train = split_frame(train_tf)

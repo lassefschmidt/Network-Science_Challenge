@@ -15,6 +15,7 @@ import numpy as np
 from sklearn.metrics import accuracy_score, roc_auc_score
 import pandas as pd
 import networkx as nx # graph data
+from node2vec import Node2Vec
 
 # ignore warnings that show in every raytune run
 import warnings
@@ -55,12 +56,16 @@ class Encoder(torch.nn.Module):
     
 def enrich_node_info(G, node_info):
 
+    # generate random walks for node2vec
+    node2vec = Node2Vec(G, dimensions=4, walk_length=80, num_walks=10, workers=1, p=1.25, q=0.25)
+
     # compute graph-based node features
     DCT = nx.degree_centrality(G)
     BCT = nx.betweenness_centrality(G)
     KCT = nx.katz_centrality(G, alpha = 0.01)
     PR  = nx.pagerank(G)
     HUB, AUTH = nx.hits(G)
+    N2V = node2vec.fit(window=10)
 
     return (node_info
         .assign(KEYS = lambda df_: df_.sum(axis = 1))
@@ -70,6 +75,7 @@ def enrich_node_info(G, node_info):
         .assign(PR   = lambda df_: [PR[node]   for node in df_.index])
         .assign(HUB  = lambda df_: [HUB[node]  for node in df_.index])
         .assign(AUTH = lambda df_: [AUTH[node] for node in df_.index])
+        .assign(N2V  = lambda df_: [N2V.wv[node]  for node in df_.index])
     )
 
 def load(testing_ratio = 0.3):

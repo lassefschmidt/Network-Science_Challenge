@@ -2,6 +2,8 @@
 from apyori import apriori # generate decision rules
 from itertools import combinations
 import networkx as nx # graph data
+from node2vec import Node2Vec
+from node2vec.edges import HadamardEmbedder, AverageEmbedder, WeightedL1Embedder, WeightedL2Embedder
 import sknetwork
 import numpy as np
 import json
@@ -164,6 +166,18 @@ def get_sknetwork_features(G, ebunch, feature_name):
     scorer = scorer.fit(adj)
     return scorer.predict(ebunch)
 
+def get_n2v(G):
+    # precompute probabilities and generate walks
+    node2vec = Node2Vec(G, dimensions=4, walk_length=80, num_walks=10, workers=1, p=1.25, q=0.25)
+
+    # embed nodes
+    model = node2vec.fit(window=10)
+
+    # edge embedding
+    l2_edges_embs = WeightedL2Embedder(keyed_vectors=model.wv)
+
+    return l2_edges_embs
+
 def get_simrank(G, G_train, edgelist_test, edgelist_trainval):
     """Returns simrank of G and G_train
     G, G_train graphs
@@ -220,7 +234,7 @@ def rooted_pagerank(G, node, d = 0.85, epsilon = 1e-4):
 
     return eigen_dict
 
-def feature_extractor(edgelist, G, node_info, simrank_test, simrank_trainval, pagerank_test, pagerank_trainval, trainval = None):
+def feature_extractor(edgelist, G, node_info, simrank_test, simrank_trainval, pagerank_test, pagerank_trainval, n2v, trainval = None):
     """
     Enrich edgelist with graph-based edge features
     (e.g. resource allocation index, jaccard coefficient, etc.)
@@ -337,6 +351,10 @@ def feature_extractor(edgelist, G, node_info, simrank_test, simrank_trainval, pa
         .assign(katz_idx = lambda df_: [katz_idx.get((u, v), 0) for u, v in zip(df_.node1, df_.node2)])
         .assign(sim_rank = lambda df_: [read_simrank_json(u, v) for u, v in zip(df_.node1, df_.node2)])
         .assign(root_pagerank = lambda df_: [read_pagerank_json(u, v) for u, v in zip(df_.node1, df_.node2)])
+        .assign(node2vec_1 = lambda df_: [n2v[(str(u), str(v))][0] for u, v in zip(df_.node1, df_.node2)])
+        .assign(node2vec_2 = lambda df_: [n2v[(str(u), str(v))][1] for u, v in zip(df_.node1, df_.node2)])
+        .assign(node2vec_3 = lambda df_: [n2v[(str(u), str(v))][2] for u, v in zip(df_.node1, df_.node2)])
+        .assign(node2vec_4 = lambda df_: [n2v[(str(u), str(v))][3] for u, v in zip(df_.node1, df_.node2)])
         # quasi-local edge features
         .assign(friendLink = lambda df_: [friendLink.get((u, v), 0) for u, v in zip(df_.node1, df_.node2)])
     )
